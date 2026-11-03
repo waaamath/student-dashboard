@@ -1,0 +1,229 @@
+'use strict';
+
+// 這兩個值都是公開資訊，資料的把關在後端（token 驗證 + 名冊）。
+const CLIENT_ID = '';
+const API_URL = 'https://script.google.com/macros/s/AKfycbxvwBJFQMB-fsjs4Nbw1HhQVZVgcFqIWjOTiYAt04A-rviphe3xK7MmKCwluvJ8pAkv/exec';
+
+const app = document.getElementById('app');
+let idToken = null;    // 只放記憶體，關掉頁面就沒了
+let dashboard = null;
+let selected = 0;
+
+/** 建立元素；文字一律走 textContent，作業標題不會被當成 HTML。 */
+function el(tag, props, ...children) {
+  const node = document.createElement(tag);
+  Object.entries(props || {}).forEach(([k, v]) => {
+    if (k === 'on') Object.entries(v).forEach(([ev, fn]) => node.addEventListener(ev, fn));
+    else if (k === 'class') node.className = v;
+    else if (k === 'text') node.textContent = v;
+    else node.setAttribute(k, v);
+  });
+  children.flat().forEach((c) => c && node.append(c));
+  return node;
+}
+
+function show(...nodes) {
+  app.replaceChildren(...nodes);
+  window.scrollTo(0, 0);
+}
+
+function message(title, lines, actions) {
+  show(el('div', { class: 'message' },
+    el('h1', { text: title }),
+    (lines || []).map((t) => el('p', { text: t })),
+    actions || []));
+}
+
+/* ---------- LINE 等 App 內建瀏覽器 ---------- */
+
+// LINE 認得這個參數，會改用外部瀏覽器開啟。其他 App 內建瀏覽器則顯示提示。
+function inAppBrowser() {
+  const ua = navigator.userAgent;
+  if (/\bLine\//i.test(ua)) {
+    const url = new URL(location.href);
+    if (url.searchParams.get('openExternalBrowser') !== '1') {
+      url.searchParams.set('openExternalBrowser', '1');
+      location.replace(url.href);
+      return 'redirecting';
+    }
+    return 'blocked';
+  }
+  return /FBAN|FBAV|FB_IAB|Instagram|MicroMessenger/i.test(ua) ? 'blocked' : 'ok';
+}
+
+function showInAppNotice() {
+  const url = location.origin + location.pathname;
+  const status = el('p', { text: '' });
+  message('請改用 Safari 或 Chrome 開啟', [
+    'Google 不允許在 App 內建的瀏覽器登入。請複製網址，貼到 Safari 或 Chrome。',
+    url,
+  ], [
+    el('button', {
+      class: 'primary', text: '複製網址',
+      on: { click: async () => {
+        try {
+          await navigator.clipboard.writeText(url);
+          status.textContent = '已複製。';
+        } catch (e) {
+          status.textContent = '無法自動複製，請長按上面的網址。';
+        }
+      } },
+    }),
+    status,
+  ]);
+}
+
+/* ---------- 登入 ---------- */
+
+function showLogin(note) {
+  idToken = null;
+  dashboard = null;
+  selected = 0;
+  const box = el('div', { class: 'signin' });
+  show(el('div', { class: 'message login' },
+    el('h1', { text: '學生儀表板' }),
+    el('p', { text: '查看 Classroom 作業的繳交狀態。學生請用加入 Classroom 的 Gmail 登入，家長請用登記給老師的 Gmail 登入。' }),
+    note ? el('p', { text: note }) : null,
+    box));
+  if (!CLIENT_ID) {
+    box.textContent = '系統尚未完成設定。';
+    return;
+  }
+  if (!window.google || !google.accounts) {
+    box.textContent = '無法載入 Google 登入，請確認網路後重新整理。';
+    return;
+  }
+  google.accounts.id.initialize({ client_id: CLIENT_ID, callback: onCredential, auto_select: false });
+  google.accounts.id.renderButton(box, { theme: 'outline', size: 'large', text: 'signin_with', locale: 'zh-TW', width: 280 });
+}
+
+function signOut() {
+  if (window.google && google.accounts) google.accounts.id.disableAutoSelect();
+  showLogin('已登出。如果這是共用裝置，也請到系統設定移除自己的 Google 帳號。');
+}
+
+function onCredential(response) {
+  idToken = response.credential;
+  load();
+}
+
+/* ---------- 讀資料 ---------- */
+
+async function load() {
+  message('讀取中…', ['第一次開啟可能要等幾秒。']);
+  let res;
+  try {
+    const r = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },   // 不觸發 CORS 預檢，Apps Script 不支援
+      body: JSON.stringify({ idToken }),
+    });
+    res = await r.json();
+  } catch (e) {
+    showRetry('連不上伺服器，請確認網路後再試一次。');
+    return;
+  }
+  if (res.ok) {
+    dashboard = res;
+    renderDashboard();
+  } else if (res.code === 'not_enrolled') {
+    showNotEnrolled(res.email);
+  } else if (res.code === 'invalid_token') {
+    showLogin('登入已過期，請重新登入。');
+  } else if (res.code === 'not_configured') {
+    showLogin('系統尚未完成設定，請聯絡老師。');
+  } else {
+    showRetry('系統暫時無法讀取資料，請稍後再試。');
+  }
+}
+
+function showRetry(text) {
+  message('讀取失敗', [text], [
+    el('button', { class: 'primary', text: '再試一次', on: { click: load } }),
+    ' ',
+    el('button', { text: '重新登入', on: { click: () => showLogin() } }),
+  ]);
+}
+
+function showNotEnrolled(email) {
+  message('此帳號尚未開通', [
+    '目前登入的帳號是 ' + email + '。',
+    '如果裝置上有多個 Google 帳號，請換成加入 Classroom 或登記給老師的帳號。還是無法進入，請聯絡老師。',
+  ], [el('button', { class: 'primary', text: '換帳號登入', on: { click: signOut } })]);
+}
+
+/* ---------- 畫面 ---------- */
+
+const TPE_DATE = new Intl.DateTimeFormat('zh-TW', {
+  timeZone: 'Asia/Taipei', month: 'numeric', day: 'numeric', weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
+});
+
+function formatTime(ms) {
+  const p = {};
+  TPE_DATE.formatToParts(new Date(ms)).forEach((x) => { p[x.type] = x.value; });
+  return `${p.month}/${p.day}（${p.weekday.replace('週', '')}）${p.hour}:${p.minute}`;
+}
+
+function itemNode(item) {
+  const title = item.link
+    ? el('a', { class: 'item-title', href: item.link, target: '_blank', rel: 'noopener', text: item.title })
+    : el('span', { class: 'item-title', text: item.title });
+  const due = item.dueMs === null ? '沒有截止時間' : '截止 ' + formatTime(item.dueMs);
+  return el('li', { class: 'item' },
+    el('div', { class: 'item-body' }, title,
+      el('span', { class: 'item-meta', text: due }),
+      el('span', { class: 'item-meta', text: item.course })),
+    el('span', { class: 'badge badge-' + item.status, text: item.status }));
+}
+
+function listOrEmpty(items, emptyText) {
+  return items.length ? el('ul', { class: 'list' }, items.map(itemNode)) : el('p', { class: 'empty', text: emptyText });
+}
+
+function summaryText(st) {
+  if (!st.all.length) return '目前沒有作業紀錄';
+  if (!st.pending.length) return '作業都交了';
+  const overdue = st.pending.filter((i) => i.status === '逾期').length;
+  return overdue ? `未繳 ${st.pending.length} 份，其中 ${overdue} 份逾期` : `未繳 ${st.pending.length} 份`;
+}
+
+function renderDashboard() {
+  const st = dashboard.students[selected] || dashboard.students[0];
+  show(
+    el('div', { class: 'topbar' },
+      el('h1', { text: '學生儀表板' }),
+      el('button', { text: '登出', on: { click: signOut } })),
+    dashboard.students.length > 1
+      ? el('div', { class: 'chooser', role: 'group', 'aria-label': '選擇孩子' },
+        dashboard.students.map((s, i) => el('button', {
+          'aria-pressed': String(s === st), text: s.name,
+          on: { click: () => { selected = i; renderDashboard(); } },
+        })))
+      : null,
+    el('p', { class: 'who' }, st.name, st.className ? el('span', { text: st.className }) : null),
+    el('p', { class: 'summary', text: summaryText(st) }),
+    el('h2', { text: `未繳作業（${st.pending.length}）` }),
+    listOrEmpty(st.pending, '目前沒有未繳作業。'),
+    el('h2', { text: `全部作業（${st.all.length}）` }),
+    listOrEmpty(st.all, '還沒有派發的作業。'),
+    el('footer', null,
+      el('p', { text: dashboard.syncedAt ? `資料更新於 ${formatTime(dashboard.syncedAt)}，每小時更新一次。` : '資料尚未同步。' }),
+      el('details', null,
+        el('summary', { text: '把這個頁面加到手機主畫面' }),
+        el('p', { text: 'iPhone：用 Safari 開啟，按分享，選「加入主畫面」。' }),
+        el('p', { text: 'Android：用 Chrome 開啟，按右上角選單，選「加到主畫面」。' }))));
+}
+
+/* ---------- 啟動 ---------- */
+
+window.addEventListener('load', () => {
+  if (window.DASHBOARD_PREVIEW) {   // tests/preview.html 用，正式頁面不會有
+    dashboard = window.DASHBOARD_PREVIEW;
+    renderDashboard();
+    return;
+  }
+  const browser = inAppBrowser();
+  if (browser === 'redirecting') return;
+  if (browser === 'blocked') showInAppNotice();
+  else showLogin();
+});

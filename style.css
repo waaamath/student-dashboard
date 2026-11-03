@@ -1,0 +1,95 @@
+:root {
+  --bg: #f4f5f6;
+  --surface: #ffffff;
+  --text: #16191d;
+  --muted: #4e5761;
+  --accent: #0f6b5c;
+  --on-accent: #ffffff;
+  --overdue: #b3261e;
+  --overdue-bg: #fbe9e7;
+  --pending: #7a4a00;
+  --pending-bg: #fdf0d9;
+  --done: #23693f;
+  --done-bg: #e4f3e9;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171a;
+    --surface: #1f2327;
+    --text: #eef0f2;
+    --muted: #b1b8bf;
+    --accent: #6fd3bf;
+    --on-accent: #0c211d;
+    --overdue: #ffb4ab;
+    --overdue-bg: #4a1f1b;
+    --pending: #f5c98a;
+    --pending-bg: #40300f;
+    --done: #9adbb2;
+    --done-bg: #1c3b28;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+}
+main { max-width: 640px; margin: 0 auto; padding: 16px 16px 48px; }
+h1 { font-size: 22px; line-height: 1.25; margin: 0; }
+h2 { font-size: 18px; line-height: 1.3; margin: 32px 0 10px; }
+p { margin: 0 0 12px; }
+a { color: var(--accent); }
+
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+
+button {
+  font: inherit;
+  min-height: 44px;
+  padding: 8px 16px;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  background: var(--surface);
+  color: var(--text);
+}
+button:focus-visible, a:focus-visible, summary:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.primary { background: var(--accent); color: var(--on-accent); }
+
+.message { background: var(--surface); border-radius: 8px; padding: 20px 16px; }
+.message h1, .message h2 { margin: 0 0 8px; }
+.message button { margin-top: 4px; }
+.signin { margin: 20px 0 8px; min-height: 44px; }
+.login h1 { margin-bottom: 8px; }
+
+.chooser { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.chooser button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+
+.who { font-size: 20px; font-weight: 700; line-height: 1.3; margin: 0; }
+.who span { font-size: 16px; font-weight: 400; color: var(--muted); margin-left: 8px; }
+.summary { font-size: 18px; margin: 4px 0 0; }
+
+.list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--surface);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.item-body { min-width: 0; overflow-wrap: anywhere; }
+.item-title { font-weight: 600; display: block; }
+.item-meta { color: var(--muted); font-size: 14px; display: block; margin-top: 2px; }
+.badge { flex: none; font-size: 14px; font-weight: 600; padding: 2px 10px; border-radius: 6px; white-space: nowrap; }
+.badge-逾期 { color: var(--overdue); background: var(--overdue-bg); }
+.badge-未繳 { color: var(--pending); background: var(--pending-bg); }
+.badge-已繳 { color: var(--done); background: var(--done-bg); }
+
+.empty { background: var(--surface); border-radius: 8px; padding: 14px; margin: 0; }
+
+footer { margin-top: 32px; color: var(--muted); font-size: 14px; }
+details { margin-top: 8px; }
+summary { cursor: pointer; min-height: 32px; }
