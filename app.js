@@ -24,7 +24,7 @@ function el(tag, props, ...children) {
 }
 
 function show(...nodes) {
-  app.replaceChildren(...nodes);
+  app.replaceChildren(...nodes.filter(Boolean));
   window.scrollTo(0, 0);
 }
 
@@ -165,11 +165,18 @@ function formatTime(ms) {
   return `${p.month}/${p.day}（${p.weekday.replace('週', '')}）${p.hour}:${p.minute}`;
 }
 
+function formatDate(ms) {
+  const p = {};
+  TPE_DATE.formatToParts(new Date(ms)).forEach((x) => { p[x.type] = x.value; });
+  return `${p.month}/${p.day}`;
+}
+
 function itemNode(item) {
   const title = item.link
     ? el('a', { class: 'item-title', href: item.link, target: '_blank', rel: 'noopener', text: item.title })
     : el('span', { class: 'item-title', text: item.title });
-  const due = item.dueMs === null ? '沒有截止時間' : '截止 ' + formatTime(item.dueMs);
+  const due = item.dueMs !== null ? '截止 ' + formatTime(item.dueMs)
+    : item.assignedMs !== null ? '指派 ' + formatDate(item.assignedMs) : '沒有截止時間';
   return el('li', { class: 'item' },
     el('div', { class: 'item-body' }, title,
       el('span', { class: 'item-meta', text: due }),
