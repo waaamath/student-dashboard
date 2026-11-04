@@ -9,6 +9,7 @@ let idToken = null;    // 只放記憶體，關掉頁面就沒了
 let dashboard = null;
 let selected = 0;      // 老師在學生清單時為 null
 let teacherFilter = { q: '', cls: '' };
+let view = 'work';     // 'work' 作業、'wrong' 錯題
 
 /** 建立元素；文字一律走 textContent，作業標題不會被當成 HTML。 */
 function el(tag, props, ...children) {
@@ -81,6 +82,7 @@ function showLogin(note) {
   dashboard = null;
   selected = 0;
   teacherFilter = { q: '', cls: '' };
+  view = 'work';
   const box = el('div', { class: 'signin' });
   show(el('div', { class: 'message login' },
     el('h1', { text: '學生儀表板' }),
@@ -261,6 +263,111 @@ function renderTeacherList() {
   show(topbar(), el('div', { class: 'filters' }, search, classSelect), count, results, footerNode());
 }
 
+/* 錯題分頁 */
+function shortDate(text) {
+  const m = /^\d{4}-(\d{1,2})-(\d{1,2})/.exec(text || '');
+  return m ? `${Number(m[1])}/${Number(m[2])}` : '';
+}
+
+function statTile(value, label) {
+  return el('div', { class: 'tile' }, el('b', { text: value }), el('small', { text: label }));
+}
+
+function paperDetail(p) {
+  const total = p.ok + p.bad;
+  return `${shortDate(p.date)} ${p.name}：答對 ${p.ok} 題，答錯 ${p.bad} 題（${Math.round(p.ok / total * 100)}%）`;
+}
+
+function paperChart(papers) {
+  const CHART_PX = 118;
+  const max = Math.max(...papers.map((p) => p.ok + p.bad));
+  const detail = el('p', { class: 'chart-detail', role: 'status' });
+  const select = (index) => {
+    detail.textContent = paperDetail(papers[index]);
+    [...bars.children].forEach((b, i) => {
+      b.classList.toggle('selected', i === index);
+      b.setAttribute('aria-pressed', String(i === index));
+    });
+  };
+  const bars = el('div', { class: 'chart-bars' }, papers.map((p, i) => {
+    const bad = el('i', { class: 'mark-bad' });
+    bad.style.height = `${p.bad / max * CHART_PX}px`;
+    const ok = el('i', { class: 'mark-ok' });
+    ok.style.height = `${p.ok / max * CHART_PX}px`;
+    return el('button', {
+      class: 'chart-col', 'aria-label': paperDetail(p),
+      on: { click: () => select(i), mouseenter: () => select(i) },
+    }, bad, ok);
+  }));
+  const chart = el('div', null,
+    el('div', { class: 'chart-legend' },
+      el('span', null, el('i', { class: 'swatch mark-ok' }), '答對'),
+      el('span', null, el('i', { class: 'swatch mark-bad' }), '答錯')),
+    bars,
+    el('div', { class: 'chart-axis' }, papers.map((p) => el('span', { text: shortDate(p.date) }))),
+    detail,
+    el('details', null,
+      el('summary', { text: '看每張卷的數字' }),
+      el('ul', { class: 'paper-table' }, [...papers].reverse().map((p) => el('li', null,
+        el('span', { text: `${shortDate(p.date)} ${p.name}` }),
+        el('span', { class: 'nums', text: `對 ${p.ok}・錯 ${p.bad}` }))))));
+  select(papers.length - 1);
+  return chart;
+}
+
+function wrongItemNode(item) {
+  const marks = item.seq.map((ok) => el('span', {
+    class: 'attempt ' + (ok ? 'mark-ok' : 'mark-bad'), 'aria-label': ok ? '答對' : '答錯', text: ok ? '○' : '×',
+  }));
+  const meta = [item.section, item.source, shortDate(item.date)].filter(Boolean).join('・');
+  const urgent = item.note.startsWith('反覆錯');
+  return el('li', { class: 'item wrong-item' },
+    el('span', { class: 'item-title', text: `${item.paper} 第 ${item.pos} 題` }),
+    el('span', { class: 'item-meta', text: meta }),
+    el('div', { class: 'attempts' }, marks,
+      el('span', { class: 'attempt-note' + (urgent ? ' urgent' : ''), text: item.note })));
+}
+
+function wrongSection(st) {
+  const w = st.wrong;
+  if (!w || (!w.papers.length && !w.recent.length)) {
+    return [el('p', { class: 'empty wrong-empty', text: '還沒有錯題紀錄。' })];
+  }
+  const retests = w.reOk + w.reBad;
+  const latest = w.papers[w.papers.length - 1];
+  return [
+    el('div', { class: 'tiles' },
+      statTile(String(w.active), '題還沒訂正回來'),
+      statTile(retests ? `${Math.round(w.reOk / retests * 100)}%` : '－', retests ? '錯題再考答對率' : '還沒有再考紀錄'),
+      latest ? statTile(`${latest.ok}/${latest.ok + latest.bad}`, '最近一張卷') : null),
+    el('h2', { text: '每張卷的答對與答錯' }),
+    w.papers.length ? paperChart(w.papers) : el('p', { class: 'empty', text: '還沒有卷子紀錄。' }),
+    el('h2', { text: '最近的錯題' }),
+    w.recent.length
+      ? el('ul', { class: 'list' }, w.recent.map(wrongItemNode))
+      : el('p', { class: 'empty', text: '目前沒有錯題。' }),
+    dashboard.wrongUpdatedAt ? el('p', { class: 'result-count wrong-updated', text: `錯題資料更新於 ${formatTime(dashboard.wrongUpdatedAt)}。` }) : null,
+  ];
+}
+
+function viewTabs() {
+  const tab = (key, label) => el('button', {
+    'aria-pressed': String(view === key), text: label,
+    on: { click: () => { view = key; renderDashboard(); } },
+  });
+  return el('div', { class: 'view-tabs', role: 'group', 'aria-label': '選擇內容' }, tab('work', '作業'), tab('wrong', '錯題'));
+}
+
+function workSection(st) {
+  return [
+    el('p', { class: 'summary', text: summaryText(st) }),
+    el('h2', { text: `未繳作業（${st.pending.length}）` }),
+    listOrEmpty(st.pending, '目前沒有未繳作業。'),
+    el('h2', { text: `全部作業（${st.all.length}）` }),
+    listOrEmpty(st.all, '還沒有派發的作業。'),
+  ];
+}
+
 function renderDashboard() {
   if (selected === null) {
     renderTeacherList();
@@ -280,11 +387,8 @@ function renderDashboard() {
         })))
       : null,
     el('p', { class: 'who' }, st.name, st.className ? el('span', { text: st.className }) : null),
-    el('p', { class: 'summary', text: summaryText(st) }),
-    el('h2', { text: `未繳作業（${st.pending.length}）` }),
-    listOrEmpty(st.pending, '目前沒有未繳作業。'),
-    el('h2', { text: `全部作業（${st.all.length}）` }),
-    listOrEmpty(st.all, '還沒有派發的作業。'),
+    viewTabs(),
+    ...(view === 'wrong' ? wrongSection(st) : workSection(st)),
     footerNode());
 }
 
