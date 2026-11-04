@@ -342,7 +342,7 @@ function wrongSection(st) {
       latest ? statTile(`${latest.ok}/${latest.ok + latest.bad}`, '最近一張卷') : null),
     el('h2', { text: '每張卷的答對與答錯' }),
     w.papers.length ? paperChart(w.papers) : el('p', { class: 'empty', text: '還沒有卷子紀錄。' }),
-    el('h2', { text: '最近的錯題' }),
+    el('h2', { text: `所有錯題（${w.recent.length}）` }),
     w.recent.length
       ? el('ul', { class: 'list' }, w.recent.map(wrongItemNode))
       : el('p', { class: 'empty', text: '目前沒有錯題。' }),
