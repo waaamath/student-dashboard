@@ -319,13 +319,42 @@ function wrongItemNode(item) {
   const marks = item.seq.map((ok) => el('span', {
     class: 'attempt ' + (ok ? 'mark-ok' : 'mark-bad'), 'aria-label': ok ? '答對' : '答錯', text: ok ? '○' : '×',
   }));
-  const meta = [item.section, item.source, shortDate(item.date)].filter(Boolean).join('・');
+  const meta = [item.source, shortDate(item.date)].filter(Boolean).join('・');
   const urgent = item.note.startsWith('反覆錯');
   return el('li', { class: 'item wrong-item' },
     el('span', { class: 'item-title', text: `${item.paper} 第 ${item.pos} 題` }),
     el('span', { class: 'item-meta', text: meta }),
     el('div', { class: 'attempts' }, marks,
       el('span', { class: 'attempt-note' + (urgent ? ' urgent' : ''), text: item.note })));
+}
+
+/** 依冊、章分組；冊與章都由小到大，查不到的排最後。章預設收合，先看題數。 */
+function wrongGroups(items) {
+  const books = new Map();
+  items.forEach((item) => {
+    const book = item.book || '其他';
+    if (!books.has(book)) books.set(book, new Map());
+    const chapters = books.get(book);
+    const chapter = item.chapter === null || item.chapter === undefined ? null : item.chapter;
+    if (!chapters.has(chapter)) chapters.set(chapter, []);
+    chapters.get(chapter).push(item);
+  });
+  const nodes = [];
+  [...books.keys()].sort((a, b) => a.localeCompare(b, 'zh-Hant', { numeric: true })).forEach((book) => {
+    const chapters = books.get(book);
+    const total = [...chapters.values()].reduce((sum, list) => sum + list.length, 0);
+    nodes.push(el('h3', { text: `${book}・${total} 題` }));
+    [...chapters.keys()].sort((a, b) => (a === null) - (b === null) || a - b).forEach((chapter) => {
+      const list = chapters.get(chapter);
+      const open = list.filter((i) => i.active).length;
+      nodes.push(el('details', { class: 'chapter-group' },
+        el('summary', null,
+          el('span', { class: 'chapter-name', text: chapter === null ? '未分類' : `第 ${chapter} 章` }),
+          el('span', { class: 'chapter-count', text: open ? `${list.length} 題・未過關 ${open}` : `${list.length} 題・都過關了` })),
+        el('ul', { class: 'list' }, list.map(wrongItemNode))));
+    });
+  });
+  return nodes;
 }
 
 function wrongSection(st) {
@@ -343,9 +372,7 @@ function wrongSection(st) {
     el('h2', { text: '每張卷的答對與答錯' }),
     w.papers.length ? paperChart(w.papers) : el('p', { class: 'empty', text: '還沒有卷子紀錄。' }),
     el('h2', { text: `所有錯題（${w.recent.length}）` }),
-    w.recent.length
-      ? el('ul', { class: 'list' }, w.recent.map(wrongItemNode))
-      : el('p', { class: 'empty', text: '目前沒有錯題。' }),
+    ...(w.recent.length ? wrongGroups(w.recent) : [el('p', { class: 'empty', text: '目前沒有錯題。' })]),
     dashboard.wrongUpdatedAt ? el('p', { class: 'result-count wrong-updated', text: `錯題資料更新於 ${formatTime(dashboard.wrongUpdatedAt)}。` }) : null,
   ];
 }

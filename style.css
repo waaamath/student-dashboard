@@ -160,6 +160,23 @@ button:focus-visible, a:focus-visible, summary:focus-visible { outline: 3px soli
 .paper-table li { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; overflow-wrap: anywhere; }
 .nums { flex: none; font-variant-numeric: tabular-nums; }
 
+h3 { font-size: 16px; line-height: 1.3; margin: 20px 0 8px; }
+.chapter-group { background: var(--surface); border-radius: 8px; margin: 8px 0 0; }
+.chapter-group summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 8px 14px;
+  border-radius: 8px;
+}
+.chapter-group summary::before { content: "▸"; color: var(--muted); }
+.chapter-group[open] summary::before { content: "▾"; }
+.chapter-group summary::-webkit-details-marker { display: none; }
+.chapter-name { font-weight: 600; }
+.chapter-count { margin-left: auto; font-size: 14px; color: var(--muted); }
+.chapter-group .list { padding: 0 8px 8px; }
+.chapter-group .item { background: var(--bg); }
 .wrong-item { display: block; }
 .attempts { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 8px; }
 .attempt {
