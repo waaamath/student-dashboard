@@ -1,7 +1,7 @@
 'use strict';
 
 // 這兩個值都是公開資訊，資料的把關在後端（token 驗證 + 名冊）。
-const CLIENT_ID = '';
+const CLIENT_ID = '863861496583-i8ttdlflo03fscvcbvdc3hibqds4v7rn.apps.googleusercontent.com';
 const API_URL = 'https://script.google.com/macros/s/AKfycbxvwBJFQMB-fsjs4Nbw1HhQVZVgcFqIWjOTiYAt04A-rviphe3xK7MmKCwluvJ8pAkv/exec';
 
 const app = document.getElementById('app');
