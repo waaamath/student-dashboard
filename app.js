@@ -319,10 +319,12 @@ function wrongItemNode(item) {
   const marks = item.seq.map((ok) => el('span', {
     class: 'attempt ' + (ok ? 'mark-ok' : 'mark-bad'), 'aria-label': ok ? '答對' : '答錯', text: ok ? '○' : '×',
   }));
-  const meta = [item.source, shortDate(item.date)].filter(Boolean).join('・');
+  const where = `${item.paper} 第 ${item.pos} 題`;
+  const title = item.lecture || where;
+  const meta = (item.lecture ? [where, shortDate(item.date)] : [item.source, shortDate(item.date)]).filter(Boolean).join('・');
   const urgent = item.note.startsWith('反覆錯');
   return el('li', { class: 'item wrong-item' },
-    el('span', { class: 'item-title', text: `${item.paper} 第 ${item.pos} 題` }),
+    el('span', { class: 'item-title', text: title }),
     el('span', { class: 'item-meta', text: meta }),
     el('div', { class: 'attempts' }, marks,
       el('span', { class: 'attempt-note' + (urgent ? ' urgent' : ''), text: item.note })));
@@ -345,7 +347,9 @@ function wrongGroups(items) {
     const total = [...chapters.values()].reduce((sum, list) => sum + list.length, 0);
     nodes.push(el('h3', { text: `${book}・${total} 題` }));
     [...chapters.keys()].sort((a, b) => (a === null) - (b === null) || a - b).forEach((chapter) => {
-      const list = chapters.get(chapter);
+      // 依講義順序；沒有講解編號的排最後
+      const orderOf = (i) => (i.order === null || i.order === undefined ? Infinity : i.order);
+      const list = [...chapters.get(chapter)].sort((a, b) => (orderOf(a) === orderOf(b) ? 0 : orderOf(a) - orderOf(b)));
       const open = list.filter((i) => i.active).length;
       nodes.push(el('details', { class: 'chapter-group' },
         el('summary', null,
