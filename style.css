@@ -66,6 +66,33 @@ button:focus-visible, a:focus-visible, summary:focus-visible { outline: 3px soli
 .chooser { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
 .chooser button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
 
+.back { margin-bottom: 16px; }
+.filters { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.filters input, .filters select {
+  font: inherit;
+  min-height: 44px;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--muted);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+}
+.result-count { color: var(--muted); font-size: 14px; margin: 10px 0; }
+.student-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: baseline;
+  gap: 8px;
+  padding: 12px 14px;
+  text-align: left;
+}
+.student-name { font-weight: 600; }
+.student-class { color: var(--muted); font-size: 14px; }
+.student-state { font-size: 14px; color: var(--muted); }
+.student-state.has-overdue { color: var(--overdue); font-weight: 600; }
+
 .who { font-size: 20px; font-weight: 700; line-height: 1.3; margin: 0; }
 .who span { font-size: 16px; font-weight: 400; color: var(--muted); margin-left: 8px; }
 .summary { font-size: 18px; margin: 4px 0 0; }

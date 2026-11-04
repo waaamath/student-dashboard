@@ -7,7 +7,8 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbxvwBJFQMB-fsjs4Nbw1HhQ
 const app = document.getElementById('app');
 let idToken = null;    // 只放記憶體，關掉頁面就沒了
 let dashboard = null;
-let selected = 0;
+let selected = 0;      // 老師在學生清單時為 null
+let teacherFilter = { q: '', cls: '' };
 
 /** 建立元素；文字一律走 textContent，作業標題不會被當成 HTML。 */
 function el(tag, props, ...children) {
@@ -79,6 +80,7 @@ function showLogin(note) {
   idToken = null;
   dashboard = null;
   selected = 0;
+  teacherFilter = { q: '', cls: '' };
   const box = el('div', { class: 'signin' });
   show(el('div', { class: 'message login' },
     el('h1', { text: '學生儀表板' }),
@@ -124,8 +126,7 @@ async function load() {
     return;
   }
   if (res.ok) {
-    dashboard = res;
-    renderDashboard();
+    openDashboard(res);
   } else if (res.code === 'not_enrolled') {
     showNotEnrolled(res.email);
   } else if (res.code === 'invalid_token') {
@@ -187,13 +188,84 @@ function summaryText(st) {
   return overdue ? `未繳 ${st.pending.length} 份，其中 ${overdue} 份逾期` : `未繳 ${st.pending.length} 份`;
 }
 
+function topbar() {
+  return el('div', { class: 'topbar' },
+    el('h1', { text: dashboard.role === 'teacher' ? '學生儀表板（老師）' : '學生儀表板' }),
+    el('button', { text: '登出', on: { click: signOut } }));
+}
+
+function footerNode() {
+  return el('footer', null,
+    el('p', { text: dashboard.syncedAt ? `資料更新於 ${formatTime(dashboard.syncedAt)}，每小時更新一次。` : '資料尚未同步。' }),
+    el('details', null,
+      el('summary', { text: '把這個頁面加到手機主畫面' }),
+      el('p', { text: 'iPhone：用 Safari 開啟，按分享，選「加入主畫面」。' }),
+      el('p', { text: 'Android：用 Chrome 開啟，按右上角選單，選「加到主畫面」。' })));
+}
+
+function openDashboard(data) {
+  dashboard = data;
+  selected = data.role === 'teacher' ? null : 0;
+  renderDashboard();
+}
+
+/* 老師：學生清單。只重畫結果區，打字時輸入框不會失去焦點。 */
+function studentRow(st, index) {
+  const overdue = st.pending.filter((i) => i.status === '逾期').length;
+  const state = !st.all.length ? '沒有作業紀錄'
+    : !st.pending.length ? '都交了'
+      : overdue ? `未繳 ${st.pending.length}（逾期 ${overdue}）` : `未繳 ${st.pending.length}`;
+  return el('li', null, el('button', {
+    class: 'student-row',
+    on: { click: () => { selected = index; renderDashboard(); } },
+  },
+  el('span', { class: 'student-name', text: st.name }),
+  el('span', { class: 'student-class', text: st.className }),
+  el('span', { class: 'student-state' + (overdue ? ' has-overdue' : ''), text: state })));
+}
+
+function renderTeacherList() {
+  const count = el('p', { class: 'result-count', role: 'status' });
+  const results = el('div');
+  const update = () => {
+    const q = teacherFilter.q.trim();
+    const hits = dashboard.students
+      .map((st, i) => ({ st, i }))
+      .filter(({ st }) => (!q || st.name.includes(q)) && (!teacherFilter.cls || st.className === teacherFilter.cls));
+    count.textContent = `共 ${dashboard.students.length} 位學生，顯示 ${hits.length} 位`;
+    results.replaceChildren(hits.length
+      ? el('ul', { class: 'list' }, hits.map(({ st, i }) => studentRow(st, i)))
+      : el('p', { class: 'empty', text: '找不到符合的學生。' }));
+  };
+  const search = el('input', {
+    type: 'search', 'aria-label': '搜尋學生姓名', placeholder: '搜尋姓名',
+    on: { input: (e) => { teacherFilter.q = e.target.value; update(); } },
+  });
+  search.value = teacherFilter.q;
+  const classes = [...new Set(dashboard.students.map((s) => s.className).filter(Boolean))].sort();
+  const classSelect = el('select', {
+    'aria-label': '依班級篩選',
+    on: { change: (e) => { teacherFilter.cls = e.target.value; update(); } },
+  },
+  el('option', { value: '', text: '全部班級' }),
+  classes.map((c) => el('option', { value: c, text: c })));
+  classSelect.value = teacherFilter.cls;
+  update();
+  show(topbar(), el('div', { class: 'filters' }, search, classSelect), count, results, footerNode());
+}
+
 function renderDashboard() {
+  if (selected === null) {
+    renderTeacherList();
+    return;
+  }
   const st = dashboard.students[selected] || dashboard.students[0];
   show(
-    el('div', { class: 'topbar' },
-      el('h1', { text: '學生儀表板' }),
-      el('button', { text: '登出', on: { click: signOut } })),
-    dashboard.students.length > 1
+    topbar(),
+    dashboard.role === 'teacher'
+      ? el('div', { class: 'back' }, el('button', { text: '回學生清單', on: { click: () => { selected = null; renderDashboard(); } } }))
+      : null,
+    dashboard.role !== 'teacher' && dashboard.students.length > 1
       ? el('div', { class: 'chooser', role: 'group', 'aria-label': '選擇孩子' },
         dashboard.students.map((s, i) => el('button', {
           'aria-pressed': String(s === st), text: s.name,
@@ -206,20 +278,14 @@ function renderDashboard() {
     listOrEmpty(st.pending, '目前沒有未繳作業。'),
     el('h2', { text: `全部作業（${st.all.length}）` }),
     listOrEmpty(st.all, '還沒有派發的作業。'),
-    el('footer', null,
-      el('p', { text: dashboard.syncedAt ? `資料更新於 ${formatTime(dashboard.syncedAt)}，每小時更新一次。` : '資料尚未同步。' }),
-      el('details', null,
-        el('summary', { text: '把這個頁面加到手機主畫面' }),
-        el('p', { text: 'iPhone：用 Safari 開啟，按分享，選「加入主畫面」。' }),
-        el('p', { text: 'Android：用 Chrome 開啟，按右上角選單，選「加到主畫面」。' }))));
+    footerNode());
 }
 
 /* ---------- 啟動 ---------- */
 
 window.addEventListener('load', () => {
   if (window.DASHBOARD_PREVIEW) {   // tests/preview.html 用，正式頁面不會有
-    dashboard = window.DASHBOARD_PREVIEW;
-    renderDashboard();
+    openDashboard(window.DASHBOARD_PREVIEW);
     return;
   }
   const browser = inAppBrowser();
