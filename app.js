@@ -193,8 +193,7 @@ function listOrEmpty(items, emptyText) {
 function summaryText(st) {
   if (!st.all.length) return '目前沒有作業紀錄';
   if (!st.pending.length) return '作業都交了';
-  const overdue = st.pending.filter((i) => i.status === '逾期').length;
-  return overdue ? `未繳 ${st.pending.length} 份，其中 ${overdue} 份逾期` : `未繳 ${st.pending.length} 份`;
+  return `未繳 ${st.pending.length} 份`;
 }
 
 function topbar() {
@@ -220,17 +219,16 @@ function openDashboard(data) {
 
 /* 老師：學生清單。只重畫結果區，打字時輸入框不會失去焦點。 */
 function studentRow(st, index) {
-  const overdue = st.pending.filter((i) => i.status === '逾期').length;
   const state = !st.all.length ? '沒有作業紀錄'
     : !st.pending.length ? '都交了'
-      : overdue ? `未繳 ${st.pending.length}（逾期 ${overdue}）` : `未繳 ${st.pending.length}`;
+      : `未繳 ${st.pending.length}`;
   return el('li', null, el('button', {
     class: 'student-row',
     on: { click: () => { selected = index; renderDashboard(); } },
   },
   el('span', { class: 'student-name', text: st.name }),
   el('span', { class: 'student-class', text: st.className }),
-  el('span', { class: 'student-state' + (overdue ? ' has-overdue' : ''), text: state })));
+  el('span', { class: 'student-state', text: state })));
 }
 
 function renderTeacherList() {
