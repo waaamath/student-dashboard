@@ -4,6 +4,8 @@
 const CLIENT_ID = '863861496583-i8ttdlflo03fscvcbvdc3hibqds4v7rn.apps.googleusercontent.com';
 const API_URL = 'https://script.google.com/macros/s/AKfycbxvwBJFQMB-fsjs4Nbw1HhQVZVgcFqIWjOTiYAt04A-rviphe3xK7MmKCwluvJ8pAkv/exec';
 
+const DEFAULT_NAME = '學習進度';
+
 const app = document.getElementById('app');
 let idToken = null;    // 只放記憶體，關掉頁面就沒了
 let dashboard = null;
@@ -77,15 +79,22 @@ function showInAppNotice() {
 
 /* ---------- 登入 ---------- */
 
+/** 瀏覽器分頁與加入主畫面時預設帶入的名稱。 */
+function setPageName(name) {
+  document.title = name;
+  document.querySelector('meta[name="apple-mobile-web-app-title"]').content = name;
+}
+
 function showLogin(note) {
   idToken = null;
   dashboard = null;
+  setPageName(DEFAULT_NAME);
   selected = 0;
   teacherFilter = { q: '', cls: '' };
   view = 'work';
   const box = el('div', { class: 'signin' });
   show(el('div', { class: 'message login' },
-    el('h1', { text: '學習進度' }),
+    el('h1', { text: DEFAULT_NAME }),
     el('p', { text: '看看進度，整理錯題，一步步累積進步。' }),
     el('p', { text: '查看 Classroom 作業的繳交狀態。學生請用加入 Classroom 的 Gmail 登入，家長請用登記給老師的 Gmail 登入。' }),
     note ? el('p', { text: note }) : null,
@@ -208,9 +217,14 @@ function summaryText(st) {
   return `未繳 ${st.pending.length} 份`;
 }
 
+/** 學生可在名冊設定自己的名稱；後端只回給本人，家長拿到空字串。 */
+function memberName() {
+  return dashboard.homeTitle || DEFAULT_NAME;
+}
+
 function topbar() {
   return el('div', { class: 'topbar' },
-    el('h1', { text: dashboard.role === 'teacher' ? '學生儀表板（老師）' : '學習進度' }),
+    el('h1', { text: dashboard.role === 'teacher' ? '學生儀表板（老師）' : memberName() }),
     el('button', { text: '登出', on: { click: signOut } }));
 }
 
@@ -226,6 +240,7 @@ function footerNode() {
 function openDashboard(data) {
   dashboard = data;
   selected = data.role === 'teacher' ? null : 0;
+  if (data.role !== 'teacher') setPageName(memberName());
   renderDashboard();
 }
 
