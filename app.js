@@ -93,10 +93,21 @@ function showLogin(note) {
     box.textContent = '系統尚未完成設定。';
     return;
   }
+  renderSignIn(box);
+}
+
+/** 頁面先出來，Google 的登入程式載入後再放按鈕。load 事件之後還沒有才算失敗。 */
+function renderSignIn(box) {
   if (!window.google || !google.accounts) {
-    box.textContent = '無法載入 Google 登入，請確認網路後重新整理。';
+    if (document.readyState === 'complete') {
+      box.textContent = '無法載入 Google 登入，請確認網路後重新整理。';
+    } else {
+      box.textContent = '正在準備登入按鈕…';
+      window.addEventListener('load', () => { if (box.isConnected) renderSignIn(box); }, { once: true });
+    }
     return;
   }
+  box.textContent = '';
   google.accounts.id.initialize({ client_id: CLIENT_ID, callback: onCredential, auto_select: false });
   google.accounts.id.renderButton(box, { theme: 'outline', size: 'large', text: 'signin_with', locale: 'zh-TW', width: 280 });
 }
@@ -423,13 +434,13 @@ function renderDashboard() {
 
 /* ---------- 啟動 ---------- */
 
-window.addEventListener('load', () => {
-  if (window.DASHBOARD_PREVIEW) {   // tests/preview.html 用，正式頁面不會有
-    openDashboard(window.DASHBOARD_PREVIEW);
-    return;
-  }
+if (window.DASHBOARD_PREVIEW) {   // tests/preview.html 用，正式頁面不會有
+  openDashboard(window.DASHBOARD_PREVIEW);
+} else {
   const browser = inAppBrowser();
-  if (browser === 'redirecting') return;
   if (browser === 'blocked') showInAppNotice();
-  else showLogin();
-});
+  else if (browser === 'ok') {
+    showLogin();
+    fetch(API_URL).catch(() => {});   // 趁使用者按登入前先喚醒後端，失敗不影響登入
+  }
+}
