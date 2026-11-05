@@ -85,7 +85,7 @@ function showLogin(note) {
   view = 'work';
   const box = el('div', { class: 'signin' });
   show(el('div', { class: 'message login' },
-    el('h1', { text: '我的學習小站' }),
+    el('h1', { text: '學習進度' }),
     el('p', { text: '看看進度，整理錯題，一步步累積進步。' }),
     el('p', { text: '查看 Classroom 作業的繳交狀態。學生請用加入 Classroom 的 Gmail 登入，家長請用登記給老師的 Gmail 登入。' }),
     note ? el('p', { text: note }) : null,
@@ -210,7 +210,7 @@ function summaryText(st) {
 
 function topbar() {
   return el('div', { class: 'topbar' },
-    el('h1', { text: dashboard.role === 'teacher' ? '學生儀表板（老師）' : '我的學習小站' }),
+    el('h1', { text: dashboard.role === 'teacher' ? '學生儀表板（老師）' : '學習進度' }),
     el('button', { text: '登出', on: { click: signOut } }));
 }
 
