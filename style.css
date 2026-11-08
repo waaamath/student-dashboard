@@ -117,7 +117,15 @@ button:focus-visible, a:focus-visible, summary:focus-visible { outline: 3px soli
 .badge-未繳 { color: var(--pending); background: var(--pending-bg); }
 .badge-已繳 { color: var(--done); background: var(--done-bg); }
 
-.view-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 16px 0; }
+.view-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin: 16px 0; }
+.home-intro { margin: 24px 0; }
+.home-intro h2 { margin-top: 0; font-size: 24px; }
+.home-intro p { color: var(--muted); }
+.home-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.home-card { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 20px 16px; text-align: left; border: 1px solid var(--axis); }
+.home-card strong { font-size: 30px; color: var(--accent); }
+.home-card small { color: var(--muted); }
+select { max-width: 100%; font: inherit; min-height: 44px; background: var(--surface); color: var(--text); }
 .view-tabs button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
 .view-tabs + .summary { margin-top: 0; }
 

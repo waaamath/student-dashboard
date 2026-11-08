@@ -11,7 +11,8 @@ let idToken = null;    // 只放記憶體，關掉頁面就沒了
 let dashboard = null;
 let selected = 0;      // 老師在學生清單時為 null
 let teacherFilter = { q: '', cls: '' };
-let view = 'work';     // 'work' 作業、'wrong' 錯題
+let view = 'home';
+let wrongPeriod = null;
 
 /** 建立元素；文字一律走 textContent，作業標題不會被當成 HTML。 */
 function el(tag, props, ...children) {
@@ -239,6 +240,7 @@ function footerNode() {
 
 function openDashboard(data) {
   dashboard = data;
+  view = 'home';
   selected = data.role === 'teacher' ? null : 0;
   if (data.role !== 'teacher') setPageName(memberName());
   renderDashboard();
@@ -251,7 +253,7 @@ function studentRow(st, index) {
       : `未繳 ${st.pending.length}`;
   return el('li', null, el('button', {
     class: 'student-row',
-    on: { click: () => { selected = index; renderDashboard(); } },
+    on: { click: () => { selected = index; view = 'home'; wrongPeriod = null; renderDashboard(); } },
   },
   el('span', { class: 'student-name', text: st.name }),
   el('span', { class: 'student-class', text: st.className }),
@@ -387,13 +389,20 @@ function wrongGroups(items) {
 }
 
 function wrongSection(st) {
-  const w = st.wrong;
+  const original = st.wrong;
+  const periods = original && original.periods;
+  const chosen = periods && wrongPeriod !== 'all' && (periods.find(p => p.id === wrongPeriod) || periods.find(p => p.start <= new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Taipei' }) && p.end >= new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Taipei' })));
+  const w = chosen ? chosen.data : original;
+  const picker = periods ? el('select', { 'aria-label': '月考區間', on: { change: e => { wrongPeriod = e.target.value; renderDashboard(); } } },
+    el('option', { value: 'all', text: '全部歷史紀錄' }), periods.map(p => el('option', { value: p.id, text: `${p.name}（${p.start}～${p.end}）` }))) : null;
+  if (picker) picker.value = chosen ? chosen.id : 'all';
   if (!w || (!w.papers.length && !w.recent.length)) {
-    return [el('p', { class: 'empty wrong-empty', text: '還沒有錯題紀錄。' })];
+    return [picker, el('p', { class: 'empty wrong-empty', text: '還沒有錯題紀錄。' })];
   }
   const retests = w.reOk + w.reBad;
   const latest = w.papers[w.papers.length - 1];
   return [
+    picker,
     el('div', { class: 'tiles' },
       statTile(String(w.active), '題還沒訂正回來'),
       statTile(retests ? `${Math.round(w.reOk / retests * 100)}%` : '－', retests ? '錯題再考答對率' : '還沒有再考紀錄'),
@@ -411,7 +420,26 @@ function viewTabs() {
     'aria-pressed': String(view === key), text: label,
     on: { click: () => { view = key; renderDashboard(); } },
   });
-  return el('div', { class: 'view-tabs', role: 'group', 'aria-label': '選擇內容' }, tab('work', '作業'), tab('wrong', '錯題'));
+  return el('div', { class: 'view-tabs', role: 'group', 'aria-label': '選擇內容' }, tab('home', '首頁'), tab('work', '作業'), tab('wrong', '錯題'));
+}
+
+function homeSection(st) {
+  const w = st.wrong;
+  const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Taipei' });
+  const period = w && w.periods && w.periods.find(p => p.start <= today && today <= p.end);
+  const scoped = w && w.periods;
+  const count = period ? period.data.active : scoped ? '－' : w ? w.active : '－';
+  const card = (key, title, value, caption) => el('button', { class: 'home-card', on: { click: () => { view = key; wrongPeriod = null; renderDashboard(); } } },
+    el('span', { text: title }), el('strong', { text: value }), el('small', { text: caption + ' ›' }));
+  return [
+    el('section', { class: 'home-intro' }, el('h2', { text: '看看目前的學習進度' }),
+      el('p', { text: period ? `${period.name} · ${period.start}～${period.end}` : scoped ? '目前沒有可用的月考區間' : '作業與錯題整理' })),
+    el('div', { class: 'home-cards' },
+      card('work', '未繳作業', `${st.pending.length} 份`, '查看作業進度'),
+      card('wrong', '尚未過關', `${count} 題`, period ? '查看本區間錯題' : scoped ? '查看歷史錯題' : '查看錯題整理')),
+    el('h2', { text: '現在先處理' }),
+    listOrEmpty(st.pending.slice(0, 3), '目前沒有未繳作業。'),
+  ];
 }
 
 function workSection(st) {
@@ -439,12 +467,12 @@ function renderDashboard() {
       ? el('div', { class: 'chooser', role: 'group', 'aria-label': '選擇孩子' },
         dashboard.students.map((s, i) => el('button', {
           'aria-pressed': String(s === st), text: s.name,
-          on: { click: () => { selected = i; renderDashboard(); } },
+          on: { click: () => { selected = i; view = 'home'; wrongPeriod = null; renderDashboard(); } },
         })))
       : null,
     el('p', { class: 'who' }, st.name, st.className ? el('span', { text: st.className }) : null),
     viewTabs(),
-    ...(view === 'wrong' ? wrongSection(st) : workSection(st)),
+    ...(view === 'home' ? homeSection(st) : view === 'wrong' ? wrongSection(st) : workSection(st)),
     footerNode());
 }
 
