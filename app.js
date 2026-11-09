@@ -276,10 +276,21 @@ function openDashboard(data) {
   }
 }
 
-/** 練習獸讀完：只換分頁按鈕，不重畫整頁（不跳回頂端、輸入框不失焦）。 */
+/** 練習獸讀完或 XP 變了：只換分頁按鈕與首頁小卡，不重畫整頁（不跳回頂端、輸入框不失焦）。 */
 function refreshTabs() {
+  if (!dashboard || selected === null) return;
   const old = app.querySelector('.view-tabs');
-  if (old && dashboard && selected !== null) old.replaceWith(viewTabs());
+  if (old) old.replaceWith(viewTabs());
+  const slot = app.querySelector('.home-pet-slot');
+  if (slot) fillHomePet(slot, dashboard.students[selected] || dashboard.students[0]);
+}
+
+/** 首頁練習獸小卡；沒有練習獸分頁（未開放、讀不到、讀取中）就是空的。 */
+function fillHomePet(slot, st) {
+  const hadFocus = slot.contains(document.activeElement);
+  const card = hasPet() ? Pet.homeCard(selected, st, () => { view = 'pet'; renderDashboard(); }) : null;
+  slot.replaceChildren(...(card ? [card] : []));
+  if (hadFocus && card) card.focus({ preventScroll: true });
 }
 
 function petTab() {
@@ -478,6 +489,7 @@ function homeSection(st) {
     el('div', { class: 'home-cards' },
       card('work', '未繳作業', `${st.pending.length} 份`, '查看作業進度'),
       card('wrong', '尚未過關', `${count} 題`, period ? '查看本區間錯題' : scoped ? '查看歷史錯題' : '查看錯題整理')),
+    (() => { const slot = el('div', { class: 'home-pet-slot' }); fillHomePet(slot, st); return slot; })(),
     el('h2', { text: '現在先處理' }),
     listOrEmpty(st.pending.slice(0, 3), '目前沒有未繳作業。'),
   ];
@@ -526,6 +538,7 @@ if (hasPet()) {
     call: apiCall,
     rerender: () => { if (dashboard && selected !== null) renderDashboard(); },
     onLoaded: refreshTabs,
+    onChanged: refreshTabs,
     onExpired: () => showLogin('登入已過期，請重新登入。'),
     isShowing: () => !!dashboard && selected !== null && view === 'pet',
   });

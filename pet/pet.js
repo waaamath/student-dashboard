@@ -103,9 +103,11 @@ const Pet = (() => {
     showChange();
   }
 
-  /** 正在看練習獸、沒有在孵化或取名時才重畫，不打斷操作。 */
+  /** 正在看練習獸、沒有在孵化或取名時才重畫，不打斷操作；在別的分頁就只更新首頁小卡。 */
   function showChange() {
-    if (!flow && opts.isShowing && opts.isShowing()) opts.rerender();
+    if (opts.isShowing && opts.isShowing()) {
+      if (!flow) opts.rerender();
+    } else if (opts.onChanged) opts.onChanged();
   }
 
   function gameFor(index, student) {
@@ -188,20 +190,31 @@ const Pet = (() => {
       gain.levelUp ? el('span', { class: 'pet-levelup', text: `升到 Lv.${gain.levelUp}！` }) : null);
   }
 
-  function levelNode(g) {
-    const span = g.nextLevelXp === null ? 1 : g.nextLevelXp - g.levelFloorXp;
-    const into = g.nextLevelXp === null ? 1 : g.xp - g.levelFloorXp;
+  /** 升級進度：主畫面與首頁小卡共用。 */
+  function progress(g) {
+    const max = g.nextLevelXp === null;
+    const span = max ? 1 : g.nextLevelXp - g.levelFloorXp;
+    const into = max ? 1 : g.xp - g.levelFloorXp;
+    return { span, now: Math.max(0, Math.min(span, into)), text: max ? '已經是目前最高等級' : `再 ${g.nextLevelXp - g.xp} XP 升到 Lv.${g.level + 1}` };
+  }
+
+  function barFill(p) {
     const fill = el('i');
-    fill.style.width = `${Math.max(0, Math.min(1, into / span)) * 100}%`;
+    fill.style.width = `${(p.now / p.span) * 100}%`;
+    return fill;
+  }
+
+  function levelNode(g) {
+    const p = progress(g);
     return el('section', { class: 'pet-level' },
       el('div', { class: 'pet-level-row' },
         el('b', { text: `Lv.${g.level}` }),
         el('span', { text: `累積 ${g.xp} XP` })),
       el('div', {
         class: 'pet-bar', role: 'progressbar', 'aria-label': '升級進度',
-        'aria-valuemin': '0', 'aria-valuemax': String(span), 'aria-valuenow': String(Math.max(0, Math.min(span, into))),
-      }, fill),
-      el('p', { class: 'pet-next', text: g.nextLevelXp === null ? '已經是目前最高等級。' : `再 ${g.nextLevelXp - g.xp} XP 升到 Lv.${g.level + 1}` }),
+        'aria-valuemin': '0', 'aria-valuemax': String(p.span), 'aria-valuenow': String(p.now),
+      }, barFill(p)),
+      el('p', { class: 'pet-next', text: g.nextLevelXp === null ? p.text + '。' : p.text }),
       g.levelIsTest ? el('p', { class: 'pet-note', text: '等級表還在測試，之後可能調整。' }) : null);
   }
 
@@ -370,6 +383,39 @@ const Pet = (() => {
     opts.rerender();
   }
 
+  /** 首頁小卡：有練習獸分頁才有，點了由 onOpen 切到練習獸分頁。不另外呼叫後端。 */
+  function homeCard(index, st, onOpen) {
+    const g = gameFor(index, st);
+    if (!g) return null;
+    const gain = live.gain && live.gain.slot === g.slot ? live.gain.total : 0;
+    const art = g.hatched ? artNode(g.speciesId, g.stage, g.visualState, 'is-idle') : artNode(null, 'egg', 'idle', 'is-egg');
+    art.removeAttribute('role');
+    art.removeAttribute('aria-label');
+    art.setAttribute('aria-hidden', 'true');   // 文字已經說明，按鈕名稱不要夾一長串圖片描述
+    const head = el('span', { class: 'home-pet-head' },
+      el('span', { text: '練習獸' }),
+      gain ? el('b', { class: 'home-pet-gain', text: `+${gain} XP` }) : null);
+    let body;
+    if (!g.hatched) {
+      body = [
+        el('span', { class: 'home-pet-name', text: '還在蛋裡' }),
+        el('span', { class: 'home-pet-meta', text: `已累積 ${g.xp} XP` }),
+        el('span', { class: 'home-pet-go', text: g.canAct ? '去孵化 ›' : '查看練習獸 ›' }),
+      ];
+    } else {
+      const p = progress(g);
+      body = [
+        el('span', { class: 'home-pet-row' },
+          el('span', { class: 'home-pet-name', text: g.petName || speciesLabel(g.speciesId) || '練習獸' }),
+          el('b', { class: 'home-pet-level', text: `Lv.${g.level}` })),
+        el('span', { class: 'pet-bar', 'aria-hidden': 'true' }, barFill(p)),
+        el('small', { text: `${p.text} ›` }),
+      ];
+    }
+    return el('button', { class: 'home-card home-pet' + (g.hatched ? '' : ' is-egg-card'), on: { click: onOpen } },
+      art, el('span', { class: 'home-pet-text' }, head, body));
+  }
+
   /** 練習獸分頁的內容。index＝dashboard.students 的位置。 */
   function section(index, st) {
     const g = gameFor(index, st);
@@ -383,5 +429,5 @@ const Pet = (() => {
     return g.hatched ? mainView(g, st) : eggView(g, st);
   }
 
-  return { init, reset, load, hasTab, section, cancelFlow, afterRender, status: () => data.status };
+  return { init, reset, load, hasTab, section, homeCard, cancelFlow, afterRender, status: () => data.status };
 })();
