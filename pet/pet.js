@@ -417,6 +417,22 @@ const Pet = (() => {
   }
 
   /** 練習獸分頁的內容。index＝dashboard.students 的位置。 */
+  function guide() {
+    const link = el('a', { href: '#pet-guide', text: '📖 冒險指南' });
+    const dialog = el('dialog', { id: 'pet-guide', class: 'pet-guide', 'aria-labelledby': 'pet-guide-title' },
+      el('h2', { id: 'pet-guide-title', text: '📖 冒險指南' }),
+      el('h3', { text: '🥚 孵化夥伴' }),
+      el('p', { text: '完成小測驗，遇見你的專屬練習獸，幫牠取個名字！' }),
+      el('h3', { text: '⚡ 練習就是能量' }),
+      el('p', { text: '完成並繳交指定作業，就能獲得 XP，陪夥伴一起升級。' }),
+      el('h3', { text: '✨ 剛交完作業？' }),
+      el('p', { text: '按「我剛交了作業」，查看新獲得的 XP！' }),
+      el('button', { type: 'button', text: '開始冒險', on: { click: () => dialog.close() } }));
+    link.addEventListener('click', (event) => { event.preventDefault(); dialog.showModal(); });
+    dialog.addEventListener('close', () => link.focus());
+    return el('div', { class: 'pet-guide-link' }, link, dialog);
+  }
+
   function section(index, st) {
     const g = gameFor(index, st);
     if (!g) return [el('p', { class: 'empty', text: data.status === 'loading' ? '讀取中…' : '目前沒有練習獸資料。' })];
@@ -426,7 +442,7 @@ const Pet = (() => {
       if (flow.step === 'naming' && g.hatched) return namingView(g);
       flow = null;
     }
-    return g.hatched ? mainView(g, st) : eggView(g, st);
+    return [guide(), ...(g.hatched ? mainView(g, st) : eggView(g, st))];
   }
 
   return { init, reset, load, hasTab, section, homeCard, cancelFlow, afterRender, status: () => data.status };
