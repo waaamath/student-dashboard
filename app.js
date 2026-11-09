@@ -18,6 +18,7 @@ let wrongPeriod = null;
 function el(tag, props, ...children) {
   const node = document.createElement(tag);
   Object.entries(props || {}).forEach(([k, v]) => {
+    if (v === null || v === undefined) return;   // 選用屬性（例如 disabled）不給就不設
     if (k === 'on') Object.entries(v).forEach(([ev, fn]) => node.addEventListener(ev, fn));
     else if (k === 'class') node.className = v;
     else if (k === 'text') node.textContent = v;
@@ -89,6 +90,7 @@ function setPageName(name) {
 function showLogin(note) {
   idToken = null;
   dashboard = null;
+  if (hasPet()) Pet.reset();
   setPageName(DEFAULT_NAME);
   selected = 0;
   teacherFilter = { q: '', cls: '' };
@@ -134,6 +136,29 @@ function onCredential(response) {
 }
 
 /* ---------- 讀資料 ---------- */
+
+/** 練習獸的請求（作業資料仍走 load）。30 秒沒回應就當網路失敗，前端可以用同一個 request ID 安全重試。 */
+async function apiCall(body) {
+  if (window.GAME_PREVIEW) return window.GAME_PREVIEW.call(body);   // tests/preview.html 用
+  const ctrl = window.AbortController ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), 30000) : null;
+  try {
+    const r = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(Object.assign({ idToken }, body)),
+      signal: ctrl ? ctrl.signal : undefined,
+    });
+    return await r.json();
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/** pet/pet.js 沒載入（或被擋）時，儀表板照常，只是沒有練習獸。 */
+function hasPet() {
+  return typeof Pet !== 'undefined';
+}
 
 async function load() {
   message('讀取中…', ['第一次開啟可能要等幾秒。']);
@@ -204,7 +229,8 @@ function itemNode(item) {
   return el('li', { class: 'item' },
     el('div', { class: 'item-body' }, title,
       el('span', { class: 'item-meta', text: due }),
-      el('span', { class: 'item-meta', text: item.course })),
+      // 題數未知（null）就不顯示，不顯示成 0 題
+      el('span', { class: 'item-meta', text: item.course + (typeof item.questionCount === 'number' ? '・' + item.questionCount + '題' : '') })),
     el('span', { class: 'badge badge-' + item.status, text: item.status }));
 }
 
@@ -244,6 +270,20 @@ function openDashboard(data) {
   selected = data.role === 'teacher' ? null : 0;
   if (data.role !== 'teacher') setPageName(memberName());
   renderDashboard();
+  if (hasPet()) {
+    Pet.reset();
+    Pet.load();   // 背景讀，不拖慢作業頁
+  }
+}
+
+/** 練習獸讀完：只換分頁按鈕，不重畫整頁（不跳回頂端、輸入框不失焦）。 */
+function refreshTabs() {
+  const old = app.querySelector('.view-tabs');
+  if (old && dashboard && selected !== null) old.replaceWith(viewTabs());
+}
+
+function petTab() {
+  return hasPet() && dashboard && selected !== null && Pet.hasTab(selected, dashboard.students[selected]);
 }
 
 /* 老師：學生清單。只重畫結果區，打字時輸入框不會失去焦點。 */
@@ -253,7 +293,7 @@ function studentRow(st, index) {
       : `未繳 ${st.pending.length}`;
   return el('li', null, el('button', {
     class: 'student-row',
-    on: { click: () => { selected = index; view = 'home'; wrongPeriod = null; renderDashboard(); } },
+    on: { click: () => { selected = index; view = 'home'; wrongPeriod = null; if (hasPet()) Pet.cancelFlow(); renderDashboard(); } },
   },
   el('span', { class: 'student-name', text: st.name }),
   el('span', { class: 'student-class', text: st.className }),
@@ -420,7 +460,8 @@ function viewTabs() {
     'aria-pressed': String(view === key), text: label,
     on: { click: () => { view = key; renderDashboard(); } },
   });
-  return el('div', { class: 'view-tabs', role: 'group', 'aria-label': '選擇內容' }, tab('home', '首頁'), tab('work', '作業'), tab('wrong', '錯題'));
+  return el('div', { class: 'view-tabs', role: 'group', 'aria-label': '選擇內容' },
+    tab('home', '首頁'), tab('work', '作業'), tab('wrong', '錯題'), petTab() ? tab('pet', '練習獸') : null);
 }
 
 function homeSection(st) {
@@ -458,6 +499,7 @@ function renderDashboard() {
     return;
   }
   const st = dashboard.students[selected] || dashboard.students[0];
+  if (view === 'pet' && !petTab()) view = 'home';   // 換了沒開放的孩子
   show(
     topbar(),
     dashboard.role === 'teacher'
@@ -467,16 +509,27 @@ function renderDashboard() {
       ? el('div', { class: 'chooser', role: 'group', 'aria-label': '選擇孩子' },
         dashboard.students.map((s, i) => el('button', {
           'aria-pressed': String(s === st), text: s.name,
-          on: { click: () => { selected = i; view = 'home'; wrongPeriod = null; renderDashboard(); } },
+          on: { click: () => { selected = i; view = 'home'; wrongPeriod = null; if (hasPet()) Pet.cancelFlow(); renderDashboard(); } },
         })))
       : null,
     el('p', { class: 'who' }, st.name, st.className ? el('span', { text: st.className }) : null),
     viewTabs(),
-    ...(view === 'home' ? homeSection(st) : view === 'wrong' ? wrongSection(st) : workSection(st)),
+    ...(view === 'home' ? homeSection(st) : view === 'wrong' ? wrongSection(st) : view === 'pet' ? Pet.section(selected, st) : workSection(st)),
     footerNode());
+  if (view === 'pet') Pet.afterRender();
 }
 
 /* ---------- 啟動 ---------- */
+
+if (hasPet()) {
+  Pet.init({
+    call: apiCall,
+    rerender: () => { if (dashboard && selected !== null) renderDashboard(); },
+    onLoaded: refreshTabs,
+    onExpired: () => showLogin('登入已過期，請重新登入。'),
+    isShowing: () => !!dashboard && selected !== null && view === 'pet',
+  });
+}
 
 if (window.DASHBOARD_PREVIEW) {   // tests/preview.html 用，正式頁面不會有
   openDashboard(window.DASHBOARD_PREVIEW);

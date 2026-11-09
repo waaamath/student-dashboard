@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240">
+  <title>暫用圖：sp05</title>
+  <ellipse cx="120" cy="214" rx="66" ry="10" fill="#000" opacity=".12"/>
+  <circle cx="120" cy="128" r="78" fill="#ef7f8f" stroke="#1f2a33" stroke-width="4"/>
+  <circle cx="94" cy="114" r="9" fill="#1f2a33"/>
+  <circle cx="146" cy="114" r="9" fill="#1f2a33"/>
+  <text x="120" y="160" text-anchor="middle" font-family="sans-serif" font-size="30" font-weight="700" fill="#1f2a33">E</text>
+  <text x="120" y="188" text-anchor="middle" font-family="sans-serif" font-size="16" fill="#1f2a33">暫用圖</text>
+</svg>
