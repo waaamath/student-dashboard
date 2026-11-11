@@ -16,7 +16,7 @@
 // 顯示框（stage）固定比例；名字、等級等文字放在框外，圖片大小不會影響排版。
 
 window.PET_ASSETS = {
-  version: 'storybook-young-1',
+  version: 'longterm-rpg-2',
   base: document.currentScript ? new URL('.', document.currentScript.src).href : 'pet/',   // src 的基準位置
   stage: { width: 240, height: 240 },
   missing: { src: 'placeholder/missing.svg', scale: 0.8, alt: '尚無素材' },
@@ -53,3 +53,14 @@ window.PET_ASSETS = {
     { species: 'sp05', stage: 'young', state: '*', src: 'sp05-young-idle.png', scale: 0.9, offsetY: 0.0476, alt: '絨絨獺：杏色圓耳、綠色胸絨與寬尾巴，親切微笑' },
   ],
 };
+
+// Long-term original dark-fantasy roster. Legacy spXX assets are preserved for existing saves.
+Object.assign(window.PET_ASSETS.species, {
+  abyss01:{label:'炎角龍'},abyss02:{label:'幻水狐'},abyss03:{label:'雷翼鷹'},abyss04:{label:'森靈鹿'},abyss05:{label:'鋼甲龜'}
+});
+window.PET_ASSETS.items.push({species:'rpg',stage:'egg',state:'*',src:'rpg/egg.png',scale:.8,offsetY:.02,alt:'帶有五色寶石的神祕黑曜石蛋'});
+['abyss01','abyss02','abyss03','abyss04','abyss05'].forEach(function(species){
+  ['young','growth','battle','awaken','final'].forEach(function(stage){
+    window.PET_ASSETS.items.push({species:species,stage:stage,state:'*',src:'rpg/'+species+'-'+stage+'-idle.png',scale:.96,offsetY:.02,alt:window.PET_ASSETS.species[species].label});
+  });
+});
