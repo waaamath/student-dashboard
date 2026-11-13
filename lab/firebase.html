@@ -35,6 +35,18 @@
   驗收：① 按 Google 登入後不再跳出第二個登入視窗；② 老師在 Apps Script 執行 <code>fbProtoPing</code>，上面數字在幾秒內自己變。
 </div>
 
+<div class="card">
+  <strong>通行證檢查</strong>
+  <div class="muted">請先以同一帳號登入原儀表板取得通行證；此頁只讀取、不發證。</div>
+  <div id="access-identity" class="muted">尚未登入</div>
+  <ol>
+    <li>access／自己的通行證：<span id="access-check">等待登入</span></li>
+    <li>catalog/_index：<span id="catalog-check">等待登入</span></li>
+    <li>videos/sb1_1：<span id="videos-check">等待登入</span></li>
+  </ol>
+  <button id="access-recheck" disabled>重新檢查</button>
+</div>
+
 <script type="module">
 // Firebase 網頁設定（公開值，把關靠安全規則）。建好專案後從「專案設定 → 你的應用程式」貼上。
 const FIREBASE_CONFIG = {
@@ -48,7 +60,7 @@ const CLIENT_ID = '863861496583-i8ttdlflo03fscvcbvdc3hibqds4v7rn.apps.googleuser
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
 import { getAuth, GoogleAuthProvider, signInWithCredential, onAuthStateChanged, signOut }
   from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
-import { getFirestore, doc, onSnapshot }
+import { getFirestore, doc, onSnapshot, getDocFromServer }
   from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
 
 const $ = (id) => document.getElementById(id);
@@ -75,11 +87,12 @@ let first = true;   // 開頁第一次讀到的是舊資料，不算更新秒數
 onAuthStateChanged(auth, (user) => {
   if (!user) { renderButton(); return; }
   const ids = (user.providerData || []).map((p) => p.providerId).join(', ');
-  user.getIdTokenResult().then((r) => {
+  user.getIdTokenResult().then(async (r) => {
     const g = r.claims.firebase && r.claims.firebase.identities && r.claims.firebase.identities['google.com'];
     step('Firebase 已登入（' + ms() + '）　提供者：' + ids, 'ok');
     step('Google sub 讀得到：' + (g && g[0] ? '是（規則可用它當通行證鍵）' : '否'), g && g[0] ? 'ok' : 'bad');
-  });
+    await checkVideoAccess(user, g && g[0]);
+  }).catch(() => { $('access-identity').textContent = '無法取得登入身分，請重新登入。'; });
   $('signin').innerHTML = '';
   const b = document.createElement('button');
   b.textContent = '登出（測重新登入用）';
@@ -100,8 +113,35 @@ async function onCredential(resp) {
   try {
     await signInWithCredential(auth, GoogleAuthProvider.credential(resp.credential));
   } catch (e) {
-    step('Firebase 登入失敗：' + (e.code || '') + ' ' + e.message, 'bad');
+    step('Firebase 登入失敗：' + (e.code || ''), 'bad');
   }
+}
+
+async function checkVideoAccess(user, sub) {
+  const button = $('access-recheck');
+  button.disabled = true;
+  if (typeof sub !== 'string' || !sub) {
+    $('access-identity').textContent = '無法取得 Google 身分，請重新登入。';
+    return;
+  }
+  $('access-identity').textContent = 'Google 身分：' + sub.slice(0, 4) + '…';
+  const checks = [['access-check', 'access', sub], ['catalog-check', 'catalog', '_index'], ['videos-check', 'videos', 'sb1_1']];
+  checks.forEach(([id]) => { $(id).textContent = '檢查中…'; $(id).className = 'muted'; });
+  // 強制讀伺服器且依序檢查，不以本機快取誤判撤權結果；不顯示文件內容或完整路徑。
+  for (const [id, collection, key] of checks) {
+    try {
+      const snap = await getDocFromServer(doc(db, collection, key));
+      if (auth.currentUser !== user) return;
+      $(id).textContent = snap.exists() ? '成功' : '成功（文件不存在）';
+      $(id).className = 'ok';
+    } catch (e) {
+      if (auth.currentUser !== user) return;
+      $(id).textContent = e.code === 'permission-denied' ? '被拒' : '檢查失敗，請確認連線後重試';
+      $(id).className = 'bad';
+    }
+  }
+  button.disabled = false;
+  button.onclick = () => checkVideoAccess(user, sub);
 }
 
 function listen() {
@@ -124,7 +164,7 @@ function listen() {
     const li = document.createElement('li');
     li.textContent = '#' + d.seq + '　' + lag;
     $('history').prepend(li);
-  }, (e) => step('讀取失敗：' + (e.code || '') + ' ' + e.message, 'bad'));
+  }, (e) => step('讀取失敗：' + (e.code || ''), 'bad'));
 }
 </script>
 </body>
