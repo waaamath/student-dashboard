@@ -91,6 +91,7 @@ function showLogin(note) {
   idToken = null;
   dashboard = null;
   if (hasPet()) Pet.reset();
+  if (typeof Video !== 'undefined') Video.reset();
   setPageName(DEFAULT_NAME);
   selected = 0;
   teacherFilter = { q: '', cls: '' };
@@ -126,6 +127,7 @@ function renderSignIn(box) {
 }
 
 function signOut() {
+  if (typeof Video !== 'undefined') Video.signOut().catch(() => {});
   if (window.google && google.accounts) google.accounts.id.disableAutoSelect();
   showLogin('已登出。如果這是共用裝置，也請到系統設定移除自己的 Google 帳號。');
 }
@@ -269,6 +271,10 @@ function openDashboard(data) {
   view = 'home';
   selected = data.role === 'teacher' ? null : 0;
   if (data.role !== 'teacher') setPageName(memberName());
+  if (typeof Video !== 'undefined') {
+    if (data.students.some(st => st.video === true)) Video.load(idToken);
+    else Video.reset();
+  }
   renderDashboard();
   if (hasPet()) {
     Pet.reset();
@@ -283,6 +289,18 @@ function refreshTabs() {
   if (old) old.replaceWith(viewTabs());
   const slot = app.querySelector('.home-pet-slot');
   if (slot) fillHomePet(slot, dashboard.students[selected] || dashboard.students[0]);
+  const videoSlot = app.querySelector('.home-video-slot');
+  if (videoSlot) fillHomeVideo(videoSlot, dashboard.students[selected] || dashboard.students[0]);
+}
+
+function videoTab() {
+  return typeof Video !== 'undefined' && dashboard && selected !== null && Video.hasTab(dashboard.students[selected]);
+}
+
+function fillHomeVideo(slot, st) {
+  const card = typeof Video !== 'undefined' && Video.hasTab(st)
+    ? Video.homeCard(() => { view = 'video'; renderDashboard(); }) : null;
+  slot.replaceChildren(...(card ? [card] : []));
 }
 
 /** 首頁練習獸小卡；沒有練習獸分頁（未開放、讀不到、讀取中）就是空的。 */
@@ -338,7 +356,8 @@ function renderTeacherList() {
   classes.map((c) => el('option', { value: c, text: c })));
   classSelect.value = teacherFilter.cls;
   update();
-  show(topbar(), el('div', { class: 'filters' }, search, classSelect), count, results, footerNode());
+    show(topbar(), dashboard.role === 'teacher' ? el('p', null, el('a', { href: 'teacher/', text: '影片指派' })) : null,
+      el('div', { class: 'filters' }, search, classSelect), count, results, footerNode());
 }
 
 /* 錯題分頁 */
@@ -471,8 +490,8 @@ function viewTabs() {
     'aria-pressed': String(view === key), text: label,
     on: { click: () => { view = key; renderDashboard(); } },
   });
-  return el('div', { class: 'view-tabs', role: 'group', 'aria-label': '選擇內容' },
-    tab('home', '首頁'), tab('work', '作業'), tab('wrong', '錯題'), petTab() ? tab('pet', '練習獸') : null);
+  return el('div', { class: videoTab() ? 'view-tabs video-tabs' : 'view-tabs', role: 'group', 'aria-label': '選擇內容' },
+    tab('home', '首頁'), videoTab() ? tab('video', '影片') : null, tab('work', '作業'), tab('wrong', '錯題'), petTab() ? tab('pet', '練習獸') : null);
 }
 
 function homeSection(st) {
@@ -489,6 +508,7 @@ function homeSection(st) {
     el('div', { class: 'home-cards' },
       card('work', '未繳作業', `${st.pending.length} 份`, '查看作業進度'),
       card('wrong', '尚未過關', `${count} 題`, period ? '查看本區間錯題' : scoped ? '查看歷史錯題' : '查看錯題整理')),
+    ...(videoTab() ? [(() => { const slot = el('div', { class: 'home-video-slot home-cards' }); fillHomeVideo(slot, st); return slot; })()] : []),
     (() => { const slot = el('div', { class: 'home-pet-slot' }); fillHomePet(slot, st); return slot; })(),
     el('h2', { text: '現在先處理' }),
     listOrEmpty(st.pending.slice(0, 3), '目前沒有未繳作業。'),
@@ -512,6 +532,8 @@ function renderDashboard() {
   }
   const st = dashboard.students[selected] || dashboard.students[0];
   if (view === 'pet' && !petTab()) view = 'home';   // 換了沒開放的孩子
+  if (view === 'video' && !videoTab()) view = 'home';
+  if (typeof Video !== 'undefined' && view !== 'video') Video.afterRender(false);
   show(
     topbar(),
     dashboard.role === 'teacher'
@@ -526,12 +548,15 @@ function renderDashboard() {
       : null,
     el('p', { class: 'who' }, st.name, st.className ? el('span', { text: st.className }) : null),
     viewTabs(),
-    ...(view === 'home' ? homeSection(st) : view === 'wrong' ? wrongSection(st) : view === 'pet' ? Pet.section(selected, st) : workSection(st)),
+    ...(view === 'home' ? homeSection(st) : view === 'wrong' ? wrongSection(st) : view === 'video' ? Video.section() : view === 'pet' ? Pet.section(selected, st) : workSection(st)),
     footerNode());
   if (view === 'pet') Pet.afterRender();
+  if (view === 'video') Video.afterRender(true);
 }
 
 /* ---------- 啟動 ---------- */
+
+if (typeof Video !== 'undefined') Video.init({ changed: refreshTabs });
 
 if (hasPet()) {
   Pet.init({
