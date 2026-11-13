@@ -212,13 +212,14 @@ const Video = (() => {
       const plain = (text, click, props = {}) => el('button', { text, on: { click }, ...props });
       nodes.push(el('div', { class: 'video-stage' },
         el('div', { class: 'video-player', 'aria-label': '影片播放器' }),
-        el('div', { class: 'video-tap', on: { click: pausePlayer } }),
+        el('div', { class: 'video-tap', on: { click: togglePlayer } }),
         el('div', { class: 'video-cover' },
           el('strong', { text: label(flow.item) }),
           el('small', { text: `第 ${flow.group.seq} 組・本組第 ${index} 個・${place(flow.item)}` }),
           plain(preview ? '▶ 播放' : '載入中…', startPlayer, { class: 'primary video-start' }),
           button('返回影片任務', () => { leave(); notify(); })),
         el('div', { class: 'video-bar' },
+          plain('▶', togglePlayer, { class: 'video-toggle', 'aria-label': '暫停或播放' }),
           el('input', { class: 'video-seek', type: 'range', min: '0', max: '1000', value: '0', 'aria-label': '播放進度',
             on: { input: e => { seeking = true; showTime(e.target.value / 1000 * duration()); },
               change: e => { seekTo(e.target.value / 1000 * duration()); seeking = false; } } }),
@@ -287,9 +288,20 @@ const Video = (() => {
   }
   const RATES = [1, 1.25, 1.5, 2];
   const stage = () => host && host.querySelector('.video-stage');
+  let playing = false;
+  /** 開始播放後封面就不再出現：暫停時畫面停在那一格、完全不遮，學生可以看著抄筆記。 */
   function setPlaying(on) {
+    playing = on;
     const node = stage();
-    if (node && node.classList) node.classList.toggle('is-playing', on);
+    if (node && node.classList) {
+      node.classList.toggle('is-playing', on);
+      if (on) node.classList.add('is-started');
+    }
+    const toggle = host && host.querySelector('.video-toggle');
+    if (toggle) toggle.textContent = on ? '⏸' : '▶';
+  }
+  function togglePlayer() {
+    if (playing) pausePlayer(); else startPlayer();
   }
   /** 看完、按「我看完了」或跳出全螢幕：收掉播放器，進回報頁。 */
   function finish() {
@@ -301,7 +313,7 @@ const Video = (() => {
     const node = stage();
     if (preview) { if (node) enterFullscreen(node); if (flow) flow.entered = true; setPlaying(true); return; }
     if (!player || !playerReady || !flow) return;
-    if (node) enterFullscreen(node);
+    if (node && !document.fullscreenElement && !document.webkitFullscreenElement) enterFullscreen(node);
     flow.entered = true;
     try { player.playVideo(); } catch (_) { /* 播放器還沒好，再按一次 */ }
   }
@@ -367,7 +379,7 @@ const Video = (() => {
     try { if (player) flow.rate = player.getPlaybackRate() || flow.rate; } catch (_) { /* not ready */ }
   }
   function destroyPlayer() {
-    stopClock(); playerTicket++; playerReady = false; seeking = false;
+    stopClock(); playerTicket++; playerReady = false; seeking = false; playing = false;
     if (ticker) { clearInterval(ticker); ticker = null; }
     if (player) { try { player.destroy(); } catch (_) { /* not ready */ } player = null; }
   }

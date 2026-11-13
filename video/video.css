@@ -25,7 +25,7 @@ html.video-immersive, html.video-immersive body { overflow: hidden; }
 .video-stage .video-player { margin: 0; border-radius: 0; aspect-ratio: auto; background: #000; }
 .video-tap { z-index: 1; }
 .video-cover { z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 16px; box-sizing: border-box; background: rgba(0, 0, 0, .84); text-align: center; }
-.video-stage.is-playing .video-cover { display: none; }
+.video-stage.is-playing .video-cover, .video-stage.is-started .video-cover { display: none; }
 .video-cover small { color: #c9d1d9; }
 .video-cover > button { width: min(100%, 320px); margin: 0; }
 .video-section .video-start { min-height: 72px; font-size: 1.4rem; border-radius: 18px; }
@@ -33,6 +33,7 @@ html.video-immersive, html.video-immersive body { overflow: hidden; }
 .video-seek { flex: 1; min-width: 0; height: 40px; margin: 0; accent-color: var(--accent); touch-action: pan-x; }
 .video-time { font-size: .8rem; color: #c9d1d9; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .video-section .video-bar button { min-height: 32px; padding: 4px 10px; font-size: .85rem; white-space: nowrap; }
+.video-section .video-bar .video-toggle { min-width: 44px; font-size: 1.1rem; }
 @media (orientation: landscape) and (max-height: 500px) {
   .video-cover { gap: 8px; padding: 8px 16px; }
   .video-cover small { display: none; }
