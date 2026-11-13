@@ -36,6 +36,11 @@ html.video-immersive, html.video-immersive body { overflow: hidden; }
 .video-section .video-bar .video-toggle { min-width: 44px; font-size: 1.1rem; }
 @media (orientation: landscape) and (max-height: 500px) {
   .video-cover { gap: 8px; padding: 8px 16px; }
-  .video-cover small { display: none; }
+  .video-cover small:not(.video-build) { display: none; }
   .video-section .video-start { min-height: 56px; }
 }
+
+/* 只露出影片本身：播放器上下各多 220px，YouTube 的標題列與底部按鈕落在裁切範圍外 */
+.video-clip { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); overflow: hidden; background: #000; }
+.video-stage .video-player .video-clip iframe { position: absolute; left: 0; top: -220px; width: 100%; height: calc(100% + 440px); border: 0; }
+.video-cover .video-build { color: #7d8792; font-size: .75rem; }

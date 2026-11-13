@@ -18,9 +18,11 @@ const Video = (() => {
   function init(o) {
     opts = o;
     window.addEventListener('pagehide', () => leave());
+    ['resize', 'orientationchange'].forEach(name => window.addEventListener(name, () => { fitClip(); setTimeout(fitClip, 300); }));
     ['fullscreenchange', 'webkitfullscreenchange'].forEach(name => document.addEventListener(name, () => {
       // 跳出全螢幕（例如按手機的返回鍵）就當作看到這裡，直接進回報頁。
       if (!document.fullscreenElement && !document.webkitFullscreenElement && flow && flow.page === 'play' && flow.entered) finish();
+      else { fitClip(); setTimeout(fitClip, 300); }
     }));
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden' && player) {
@@ -217,7 +219,8 @@ const Video = (() => {
           el('strong', { text: label(flow.item) }),
           el('small', { text: `第 ${flow.group.seq} 組・本組第 ${index} 個・${place(flow.item)}` }),
           plain(preview ? '▶ 播放' : '載入中…', startPlayer, { class: 'primary video-start' }),
-          button('返回影片任務', () => { leave(); notify(); })),
+          button('返回影片任務', () => { leave(); notify(); }),
+          el('small', { class: 'video-build', text: '版本 1113-5' })),
         el('div', { class: 'video-bar' },
           plain('▶', togglePlayer, { class: 'video-toggle', 'aria-label': '暫停或播放' }),
           el('input', { class: 'video-seek', type: 'range', min: '0', max: '1000', value: '0', 'aria-label': '播放進度',
@@ -287,6 +290,14 @@ const Video = (() => {
     } catch (_) { /* 不支援 */ }
   }
   const RATES = [1, 1.25, 1.5, 2];
+  function fitClip() {
+    const target = host && host.querySelector && host.querySelector('.video-stage .video-player');
+    const clip = target && target.querySelector && target.querySelector('.video-clip');
+    if (!clip || !clip.style || !target.clientWidth || !target.clientHeight) return;
+    const width = Math.min(target.clientWidth, target.clientHeight * 16 / 9);
+    clip.style.width = Math.floor(width) + 'px';
+    clip.style.height = Math.floor(width * 9 / 16) + 'px';
+  }
   const stage = () => host && host.querySelector('.video-stage');
   let playing = false;
   /** 開始播放後封面就不再出現：暫停時畫面停在那一格、完全不遮，學生可以看著抄筆記。 */
@@ -509,7 +520,10 @@ const Video = (() => {
     try {
       await youtube();
       if (ticket !== playerTicket || flow !== f || !target.isConnected) return;
-      const mount = el('div'); target.append(mount);
+      // 裁切框剛好是 16:9 的影片大小；裡面的播放器上下各多出一段，
+      // YouTube 暫停時的標題、分享、「更多影片」都在多出來的那段，被裁掉看不到。
+      const clip = el('div', { class: 'video-clip' }), mount = el('div');
+      clip.append(mount); target.append(clip); fitClip();
       player = new YT.Player(mount, {
         videoId: f.item.youtubeId, width: '100%', height: '100%',
         // 控制列用自己的：YouTube 的按鈕、標題與相關影片都不顯示，學生也點不出去。
