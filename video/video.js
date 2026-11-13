@@ -12,7 +12,7 @@ const Video = (() => {
   let token, sid, groups = [], events = [], overlay = new Map(), catalogs = new Map();
   let unsubs = [], eventUnsub, eventKey = '', status = 'idle', error = '', retryAction;
   let host, flow = null, player, playerTicket = 0, busy = false, readyEvents = false;
-  let preview = null, ytPromise;
+  let preview = null, ytPromise, shownSig = null, shownPage = null;
 
   function init(o) {
     opts = o;
@@ -67,7 +67,7 @@ const Video = (() => {
     if (eventUnsub) eventUnsub();
     eventUnsub = null; eventKey = ''; readyEvents = false;
     token = null; sid = null; groups = []; events = []; overlay = new Map(); catalogs = new Map();
-    flow = null; if (host) host.replaceChildren(); busy = false; status = 'idle'; error = ''; retryAction = null; preview = null;
+    flow = null; if (host) host.replaceChildren(); shownSig = null; shownPage = null; busy = false; status = 'idle'; error = ''; retryAction = null; preview = null;
   }
   async function signOut() {
     reset();
@@ -195,7 +195,7 @@ const Video = (() => {
         error = ''; const retry = retryAction; retryAction = null;
         if (retry) retry();
       })));
-      host.replaceChildren(...nodes);
+      place_(nodes, 'error');
       return;
     }
     if (status !== 'ready') {
@@ -229,8 +229,21 @@ const Video = (() => {
         }));
       if (groups.length > 30) nodes.push(el('p', { class: 'video-muted', text: '此頁進度與待問清單顯示最近 30 組。' }));
     }
-    host.replaceChildren(...nodes);
+    place_(nodes, status !== 'ready' ? 'loading' : flow ? `${flow.group.id}:${flow.item.gid}:${flow.page}` : 'list');
     if (flow && flow.page === 'play' && !error && !busy) mountPlayer();
+  }
+  /**
+   * 內容沒變就不重畫：即時更新一直進來時，手指下的按鈕不會被換掉。
+   * 換頁（清單→播放→回報→下一個）時把影片區捲回最上面，位置固定，不會停在舊頁面捲到一半的地方。
+   */
+  function place_(nodes, page) {
+    const html = nodes.map(n => n.outerHTML);
+    const sig = html.every(h => typeof h === 'string') ? page + '|' + html.join('') : null;
+    if (sig !== null && sig === shownSig && host.childNodes && host.childNodes.length) return;
+    const changedPage = shownPage !== null && page !== shownPage;
+    shownSig = sig; shownPage = page;
+    host.replaceChildren(...nodes);
+    if (changedPage && host.isConnected && typeof host.scrollIntoView === 'function') host.scrollIntoView({ block: 'start' });
   }
   function afterRender(showing) {
     if (!showing) { if (flow) leave(); return; }

@@ -3,16 +3,16 @@
 .video-section button { min-height: 48px; padding: 12px 18px; font: inherit; max-width: 100%; white-space: normal; }
 .video-section > button.primary { width: 100%; margin: 12px 0; }
 .video-list { list-style: none; padding: 0; display: grid; gap: 12px; }
-.video-list li { background: #fff; border: 1px solid #dde4ea; border-radius: 14px; padding: 12px; }
+.video-list li { background: var(--surface); border: 1px solid var(--axis); border-radius: 14px; padding: 12px; }
 .video-list button { width: 100%; text-align: left; }
-.video-list small { display: block; margin: 8px 4px 0; color: #586579; }
+.video-list small { display: block; margin: 8px 4px 0; color: var(--muted); }
 .video-progress { font-weight: 700; font-size: 1.3rem; }
-.video-eyebrow, .video-muted { color: #586579; }
+.video-eyebrow, .video-muted { color: var(--muted); }
 .video-player { width: 100%; aspect-ratio: 16/9; background: #101b2b; margin: 20px 0; border-radius: 12px; overflow: hidden; }
 .video-player iframe { width: 100%; height: 100%; border: 0; }
 .video-placeholder { height: 100%; display: grid; place-content: center; color: white; padding: 20px; box-sizing: border-box; }
 .video-reports { display: grid; gap: 18px; padding: 20px 0; }
 .video-reports button { min-height: 76px; font-size: 1.2rem; border-radius: 16px; }
-.video-error { padding: 16px; border-radius: 12px; background: #fff1ed; color: #8a3025; margin-bottom: 16px; }
+.video-error { padding: 16px; border-radius: 12px; background: var(--pending-bg); color: var(--pending); margin-bottom: 16px; }
 .home-video-slot { margin-top: 12px; }
 .video-card { grid-column: 1 / -1; }
