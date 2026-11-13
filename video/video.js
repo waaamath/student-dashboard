@@ -190,6 +190,7 @@ const Video = (() => {
     if (flow && flow.page === 'play' && host.querySelector('.video-player') && (player || (preview && host.querySelector('.video-placeholder'))) && !error) return;
     const nodes = [];
     if (error) {
+      immersive(false);
       nodes.push(el('div', { class: 'video-error', role: 'alert' }, el('p', { text: error }), button('再試一次', () => {
         if (busy) return;
         error = ''; const retry = retryAction; retryAction = null;
@@ -200,19 +201,22 @@ const Video = (() => {
     }
     if (status !== 'ready') {
       if (!error) nodes.push(el('p', { text: '正在讀取影片任務…' }));
+    } else if (flow && flow.page === 'play') {
+      // 播放頁蓋滿整個螢幕、鎖住捲動：畫面不會跳，手機橫放就是整個螢幕。
+      const index = flow.group.items.findIndex(i => i.gid === flow.item.gid) + 1;
+      nodes.push(el('div', { class: 'video-stage' },
+        el('div', { class: 'video-stage-top' }, el('strong', { text: label(flow.item) }),
+          el('small', { text: `第 ${flow.group.seq} 組・本組第 ${index} 個・${place(flow.item)}` })),
+        el('div', { class: 'video-player', 'aria-label': '影片播放器' }),
+        el('div', { class: 'video-stage-bottom' },
+          button('返回影片任務', () => { leave(); notify(); }),
+          button('我看完了', () => { stopClock(); destroyPlayer(); immersive(false); flow.page = 'report'; notify(); }, true))));
     } else if (flow) {
       nodes.push(button('返回影片任務', () => { leave(); notify(); }));
       nodes.push(el('p', { class: 'video-eyebrow', text: `第 ${flow.group.seq} 組・本組第 ${flow.group.items.findIndex(i => i.gid === flow.item.gid) + 1} 個` }),
         el('h2', { text: label(flow.item) }), el('p', { text: place(flow.item) }));
-      if (flow.page === 'report') {
-        nodes.push(el('h3', { text: '這次看得怎麼樣？' }), el('div', { class: 'video-reports' },
-          button('看懂了', () => report('ok'), true), button('再看一次', () => report('again')), button('還是不懂', () => report('ask'))));
-      } else {
-        nodes.push(el('div', { class: 'video-player', 'aria-label': '影片播放器' }),
-          button('我看完了', () => {
-            stopClock(); destroyPlayer(); flow.page = 'report'; notify();
-          }, true));
-      }
+      nodes.push(el('h3', { text: '這次看得怎麼樣？' }), el('div', { class: 'video-reports' },
+        button('看懂了', () => report('ok'), true), button('再看一次', () => report('again')), button('還是不懂', () => report('ask'))));
     } else {
       const d = state(), g = d.current || d.lastCompleted;
       if (!groups.length) nodes.push(el('h2', { text: '目前沒有影片任務' }));
@@ -230,7 +234,42 @@ const Video = (() => {
       if (groups.length > 30) nodes.push(el('p', { class: 'video-muted', text: '此頁進度與待問清單顯示最近 30 組。' }));
     }
     place_(nodes, status !== 'ready' ? 'loading' : flow ? `${flow.group.id}:${flow.item.gid}:${flow.page}` : 'list');
+    immersive(!!(flow && flow.page === 'play' && status === 'ready'));
     if (flow && flow.page === 'play' && !error && !busy) mountPlayer();
+  }
+  /** 播放頁開著時鎖住整頁捲動；離開時一併退出全螢幕與橫向鎖定。 */
+  function immersive(on) {
+    const root = document.documentElement;
+    if (root && root.classList) root.classList.toggle('video-immersive', on);
+    if (on) return;
+    try {
+      if (document.fullscreenElement || document.webkitFullscreenElement) {
+        const exit = document.exitFullscreen || document.webkitExitFullscreen;
+        const done = exit && exit.call(document);
+        if (done && done.catch) done.catch(() => {});
+      }
+      if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock();
+    } catch (_) { /* 不支援全螢幕的瀏覽器 */ }
+  }
+  /** 只能在使用者點按的當下呼叫。不支援時（例如 iPhone）維持蓋滿視窗的版面。 */
+  function enterFullscreen(node) {
+    try {
+      const request = node.requestFullscreen || node.webkitRequestFullscreen;
+      if (!request) return;
+      Promise.resolve(request.call(node)).then(() => {
+        if (screen.orientation && screen.orientation.lock) return screen.orientation.lock('landscape');
+      }).catch(() => {});
+    } catch (_) { /* 不支援 */ }
+  }
+  /** 自己的播放鈕：點下去才有權限進全螢幕並開始播放。 */
+  function startButton(target, play) {
+    const b = el('button', { class: 'primary video-start', text: '▶ 播放', on: { click: () => {
+      b.remove();
+      const stage = host.querySelector('.video-stage');
+      if (stage) enterFullscreen(stage);
+      play();
+    } } });
+    target.append(b);
   }
   /**
    * 內容沒變就不重畫：即時更新一直進來時，手指下的按鈕不會被換掉。
@@ -264,7 +303,7 @@ const Video = (() => {
   }
   function leave() {
     const previous = flow;
-    destroyPlayer(); flow = null;
+    destroyPlayer(); flow = null; immersive(false);
     if (previous && sdk && sid && !preview) {
       const gen = generation, ref = sdk.doc(sdk.db, 'students', sid);
       clearWatching(ref, gen);
@@ -383,7 +422,8 @@ const Video = (() => {
     const f = flow, ticket = ++playerTicket, target = host.querySelector('.video-player');
     if (!target || player) return;
     if (preview) {
-      target.append(el('div', { class: 'video-placeholder', text: '虛構播放器預覽・不連 YouTube' })); return;
+      target.append(el('div', { class: 'video-placeholder', text: '虛構播放器預覽・不連 YouTube' }));
+      startButton(target, () => {}); return;
     }
     try {
       await youtube();
@@ -393,7 +433,10 @@ const Video = (() => {
         videoId: f.item.youtubeId, width: '100%', height: '100%',
         playerVars: { playsinline: 1, rel: 0, origin: location.origin },
         events: {
-          onReady: e => { e.target.getIframe().setAttribute('allowfullscreen', ''); },
+          onReady: e => {
+            e.target.getIframe().setAttribute('allowfullscreen', '');
+            if (flow === f && target.isConnected) startButton(target, () => { try { e.target.playVideo(); } catch (_) { /* 改用播放器自己的播放鈕 */ } });
+          },
           onStateChange: e => {
             if (flow !== f) return;
             stopClock();

@@ -16,3 +16,19 @@
 .video-error { padding: 16px; border-radius: 12px; background: var(--pending-bg); color: var(--pending); margin-bottom: 16px; }
 .home-video-slot { margin-top: 12px; }
 .video-card { grid-column: 1 / -1; }
+
+/* 播放頁：蓋滿整個螢幕並鎖住捲動 */
+html.video-immersive, html.video-immersive body { overflow: hidden; }
+.video-stage { position: fixed; inset: 0; z-index: 1000; height: 100dvh; display: flex; flex-direction: column; background: #000; color: #fff; }
+.video-stage-top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 10px 14px; }
+.video-stage-top small { color: #c9d1d9; }
+.video-stage .video-player { position: relative; flex: 1; min-height: 0; margin: 0; border-radius: 0; aspect-ratio: auto; background: #000; }
+.video-stage-bottom { display: flex; gap: 10px; padding: 8px 12px calc(8px + env(safe-area-inset-bottom)); }
+.video-stage-bottom button { flex: 1; margin: 0; }
+.video-stage-bottom button.primary { flex: 2; }
+.video-section .video-start { position: absolute; inset: 0; margin: auto; width: min(70%, 320px); height: 96px; font-size: 1.5rem; border-radius: 20px; z-index: 2; }
+@media (orientation: landscape) and (max-height: 500px) {
+  .video-stage-top { display: none; }
+  .video-stage-bottom { padding: 4px 12px calc(4px + env(safe-area-inset-bottom)); }
+  .video-section .video-stage-bottom button { min-height: 40px; padding: 6px 12px; }
+}
