@@ -220,7 +220,7 @@ const Video = (() => {
           el('small', { text: `第 ${flow.group.seq} 組・本組第 ${index} 個・${place(flow.item)}` }),
           plain(preview ? '▶ 播放' : '載入中…', startPlayer, { class: 'primary video-start' }),
           button('返回影片任務', () => { leave(); notify(); }),
-          el('small', { class: 'video-build', text: '版本 1113-5' })),
+          el('small', { class: 'video-build', text: '版本 1113-6' })),
         el('div', { class: 'video-bar' },
           plain('▶', togglePlayer, { class: 'video-toggle', 'aria-label': '暫停或播放' }),
           el('input', { class: 'video-seek', type: 'range', min: '0', max: '1000', value: '0', 'aria-label': '播放進度',
@@ -326,7 +326,10 @@ const Video = (() => {
     if (!player || !playerReady || !flow) return;
     if (node && !document.fullscreenElement && !document.webkitFullscreenElement) enterFullscreen(node);
     flow.entered = true;
-    try { player.playVideo(); } catch (_) { /* 播放器還沒好，再按一次 */ }
+    try {
+      if (flow.atEnd) { flow.atEnd = false; player.seekTo(0, true); }
+      player.playVideo();
+    } catch (_) { /* 播放器還沒好，再按一次 */ }
   }
   function pausePlayer() {
     if (preview) { setPlaying(false); return; }
@@ -342,7 +345,12 @@ const Video = (() => {
     if (text) text.textContent = `${clock(current)} / ${clock(duration())}`;
   }
   function seekTo(seconds) {
-    try { if (player && playerReady) { player.seekTo(Math.max(0, seconds), true); showTime(seconds); } } catch (_) { /* not ready */ }
+    try {
+      if (player && playerReady) {
+        if (flow && seconds < duration() - 1) flow.atEnd = false;
+        player.seekTo(Math.max(0, seconds), true); showTime(seconds);
+      }
+    } catch (_) { /* not ready */ }
   }
   function showRate(rate) {
     const b = host && host.querySelector('.video-rate');
@@ -359,6 +367,7 @@ const Video = (() => {
     if (!player || !playerReady || seeking) return;
     try {
       const current = player.getCurrentTime(), total = duration(), bar = host.querySelector('.video-seek');
+      if (playing && flow && total > 1 && current >= total - 0.4) { flow.atEnd = true; player.pauseVideo(); }
       if (bar && total > 0) bar.value = String(Math.round(current / total * 1000));
       showTime(current);
     } catch (_) { /* not ready */ }
@@ -542,7 +551,11 @@ const Video = (() => {
             stopClock();
             if (e.data === YT.PlayerState.PLAYING) f.playingAt = now();
             if (e.data === YT.PlayerState.PLAYING) setPlaying(true);
-            else if (e.data === YT.PlayerState.ENDED) { finish(); return; }
+            else if (e.data === YT.PlayerState.ENDED) {
+              f.atEnd = true; setPlaying(false);
+              try { e.target.seekTo(Math.max(0, duration() - 0.5), true); e.target.pauseVideo(); } catch (_) { /* not ready */ }
+              return;
+            }
             else if (e.data !== YT.PlayerState.BUFFERING) setPlaying(false);
           },
           onPlaybackRateChange: e => { if (flow === f) { f.rate = e.data; showRate(e.data); } },
