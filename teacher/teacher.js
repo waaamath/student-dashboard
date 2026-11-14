@@ -54,7 +54,7 @@
     });
     let sdk, sdkPromise, authSerial = Promise.resolve(), generation = 0, unsubs = [], watchSerial = 0;
     let token, roster = [], selected = null, records = new Map(), catalogs = new Map(), catalogLoads = new Map(), chapters = [], chapterKey = '';
-    let dragFrom = null, renderQueued = false;
+    let dragFrom = null, renderQueued = false, menuGid = null;
     let draft = [], pendingAssign = null, resolves = new Map(), busy = false, ready = false, message = '', error = '', retry;
     let detailStops = [], detailTicket = 0, detailRefresh, checked = new Set(), unlocked = new Set(), templates = [], modal = null;
     let filter = 'today', classFilter = '', today = [], scheduleReason = '', batch = null, previewMode = false;
@@ -76,7 +76,7 @@
     const confirm = text => (options.confirm || win.confirm.bind(win))(text);
     const dirty = () => editing ? JSON.stringify(draft.map(i => i.gid)) !== editing.key : draft.length > 0;
     function discard() { return !dirty() || confirm('有尚未儲存的修改，確定放棄並切換？'); }
-    function clearEditor() { editing = null; pendingEdit = null; insertBefore = null; draft = []; }
+    function clearEditor() { menuGid = null; editing = null; pendingEdit = null; insertBefore = null; draft = []; }
     function closeThumb() { thumbPopup?.remove?.(); thumbPopup = null; }
     function showThumb(box, data, pinned = false, gid = null) {
       if (!data || thumbPopup?.pinned && !pinned) return;
@@ -370,15 +370,22 @@
       draft = next; render();
     }
     // 拖移排序：把第 from 張卡片放到第 target 張的上方或下方（after）。
+    function moved(from, target, after = false) {
+      if (!Number.isInteger(from) || !draft[from] || !draft[target]) return null;
+      let to = target + (after ? 1 : 0); if (from < to) to--;
+      if (from === to) return null;
+      const next = [...draft], [item] = next.splice(from, 1); next.splice(to, 0, item);
+      return next;
+    }
     function moveTo(from, target, after = false) {
       if (busy || pendingAssign || pendingEdit || batch) return;
-      if (!Number.isInteger(from) || !draft[from] || !draft[target]) return;
-      let to = target + (after ? 1 : 0); if (from < to) to--;
-      if (from === to) return;
-      const next = [...draft], [item] = next.splice(from, 1); next.splice(to, 0, item);
-      if (!canEdit(next)) return;
+      const next = moved(from, target, after);
+      if (!next || !canEdit(next)) return;
       draft = next; render();
     }
+    // 卡片右側三點選單：一次只開一個，點選項目或點外面就收起。
+    function toggleMenu(gid) { menuGid = menuGid === gid ? null : gid; render(); }
+    function closeMenu() { if (menuGid === null) return; menuGid = null; render(); }
     const lowerHalf = (e, li) => { const r = li.getBoundingClientRect?.(); return !!r && e.clientY > r.top + r.height / 2; };
     function dropMark(li, after) {
       doc.querySelectorAll?.('.drop-before, .drop-after').forEach(n => n.classList.remove('drop-before', 'drop-after'));
@@ -857,22 +864,26 @@
           draft.length > 1 ? button('依講義順序排序', sortDraft, { id: 'sort-draft', class: 'sort-draft', disabled: busy || !!pendingAssign || !!pendingEdit || !!batch, title: '把這組積木排回講義裡原本的先後順序' }) : null,
           !draft.length ? el('p', { class: 'draft-empty', text: '從右欄勾選積木，依勾選順序加入。' }) : el('ol', { class: 'draft-list' }, draft.map((i, index) => {
             const locked = lockedGids.has(i.gid), blocked = busy || !!pendingAssign || !!pendingEdit || !!batch;
-            const movable = delta => {
-              if (!draft[index + delta] || locked) return false;
-              const next = [...draft]; [next[index], next[index + delta]] = [next[index + delta], next[index]];
-              return canEdit(next, false);
-            };
-            const li = el('li', { draggable: String(!blocked && !locked), class: locked ? 'is-locked' : null, on: {
-              dragstart: e => { dragFrom = index; closeThumb(); doc.addEventListener?.('dragover', dragScroll); e.dataTransfer.setData('text/plain', String(index)); e.dataTransfer.effectAllowed = 'move'; li.classList?.add('dragging'); },
+            const open = menuGid === i.gid && !blocked && !locked;
+            const reachable = (target, after) => { const next = moved(index, target, after); return !!next && canEdit(next, false); };
+            const pick = fn => () => { menuGid = null; fn(); render(); };
+            // 只有左側兩條橫線的把手可以拖；卡片其他地方（預覽圖、文字）不會誤觸拖移。
+            const handle = !blocked && !locked ? el('span', { class: 'drag-handle', draggable: 'true', role: 'img', 'aria-label': `拖移第 ${index + 1} 個積木`, title: '按住這裡拖移，調整順序', on: {
+              dragstart: e => { dragFrom = index; closeThumb(); doc.addEventListener?.('dragover', dragScroll); e.dataTransfer.setData('text/plain', String(index)); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setDragImage?.(li, 12, 24); li.classList?.add('dragging'); } } }) : null;
+            const li = el('li', { draggable: 'false', class: locked ? 'is-locked' : null, on: {
               dragover: e => { if (dragFrom === null) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; dropMark(dragFrom === index ? null : li, lowerHalf(e, li)); },
               drop: e => { if (dragFrom === null) return; e.preventDefault(); const from = dragFrom, after = lowerHalf(e, li); endDrag(); moveTo(from, index, after); },
-              dragend: endDrag } },
+              dragend: endDrag } }, handle,
               thumbnail(i), el('div', null, el('strong', { text: label(i) }), el('small', { text: place(i) }),
                 locked ? el('small', { class: 'reported-lock', text: '🔒 已有回報紀錄' }) : null,
                 !multiple() ? el('small', { class: 'viewing', text: viewing(i, d) }) : null),
-              el('div', { class: 'reorder' }, !locked ? el('span', { class: 'grip', 'aria-hidden': 'true', title: '按住卡片拖移可以調整順序', text: '⠿' }) : null, button('↑', () => move(index, -1), { id: 'up-' + index, disabled: blocked || !movable(-1), 'aria-label': `上移第 ${index + 1} 個積木` }),
-                button('↓', () => move(index, 1), { id: 'down-' + index, disabled: blocked || !movable(1), 'aria-label': `下移第 ${index + 1} 個積木` }),
-                button('移除', () => toggle(i, false), { disabled: blocked || locked, title: locked ? '已有回報紀錄' : '', 'aria-label': `移除第 ${index + 1} 個積木` })));
+              el('div', { class: 'reorder' },
+                button('⋮', () => toggleMenu(i.gid), { id: 'menu-' + i.gid, class: 'card-menu-button', disabled: blocked || locked, title: locked ? '已有回報紀錄，位置固定且不能移除' : '更多操作',
+                  'aria-haspopup': 'menu', 'aria-expanded': String(open), 'aria-label': `第 ${index + 1} 個積木的選單` }),
+                open ? el('div', { class: 'card-menu', role: 'menu' },
+                  button('移至頂端', pick(() => moveTo(index, 0, false)), { role: 'menuitem', disabled: !reachable(0, false) }),
+                  button('移至底部', pick(() => moveTo(index, draft.length - 1, true)), { role: 'menuitem', disabled: !reachable(draft.length - 1, true) }),
+                  button('移除', pick(() => toggle(i, false)), { role: 'menuitem', class: 'danger', 'aria-label': `移除第 ${index + 1} 個積木` })) : null));
             return li;
           })),
           el('div', { class: 'assign-bar' }, el('p', { text: `影片總長 ${duration(total)}${missing ? `（${missing} 個缺長度，未計入）` : ''}` }),
@@ -999,8 +1010,8 @@
     }
     function init() {
       // Preview mode needs the same Esc / outside-click handling for pinned thumbnails.
-      doc.addEventListener?.('keydown', e => { if (e.key === 'Escape') closeThumb(); });
-      doc.addEventListener?.('pointerdown', e => { if (thumbPopup && !thumbPopup.contains?.(e.target) && !e.target?.closest?.('.thumb-slot')) closeThumb(); });
+      doc.addEventListener?.('keydown', e => { if (e.key === 'Escape') { closeThumb(); closeMenu(); } });
+      doc.addEventListener?.('pointerdown', e => { if (!e.target?.closest?.('.reorder')) closeMenu(); if (thumbPopup && !thumbPopup.contains?.(e.target) && !e.target?.closest?.('.thumb-slot')) closeThumb(); });
       if (options.preview) { preview(options.preview); return; }
       render(); win.addEventListener('load', renderSignIn, { once: true });
       win.addEventListener('pagehide', () => { reset(); if (sdk) sdk.signOut(sdk.auth).catch(() => {}); });

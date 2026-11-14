@@ -89,10 +89,20 @@ select { width: 100%; background: #f8faf8; border: 1px solid #d7e2d9; padding: 9
 .draft-list .thumb-slot, .report-list .thumb-slot { flex: 0 0 100%; }
 .draft-list li > div, .report-list li > div { flex: 1; min-width: 100px; display: flex; flex-direction: column; gap: 4px; }
 .draft-list li .reorder { flex: 0 0 auto; flex-direction: row; min-width: 0; }
-.draft-list li[draggable="true"] { cursor: grab; }
-.draft-list li[draggable="true"] .thumb-slot { cursor: grab; }
+.draft-list li { position: relative; padding-left: 30px; }
+.draft-list li.is-locked { padding-left: 30px; }
+.drag-handle { position: absolute; left: 0; top: 0; bottom: 0; width: 26px; display: flex; align-items: center; justify-content: center; cursor: grab; border-radius: 5px; }
+.drag-handle::before { content: ""; width: 16px; height: 5px; border-top: 2px solid #7d8f84; border-bottom: 2px solid #7d8f84; }
+.drag-handle:hover { background: #eef3ef; } .drag-handle:hover::before { border-color: #1f6b4f; }
+.drag-handle:active { cursor: grabbing; }
 .draft-list li.dragging { opacity: .4; }
 .draft-list li.drop-before { box-shadow: 0 -3px 0 #1f6b4f; }
 .draft-list li.drop-after { box-shadow: 0 3px 0 #1f6b4f; }
-.grip { color: #9aa9a0; font-size: 16px; line-height: 1; padding: 4px 2px; user-select: none; }
 .sort-draft { font-size: 12px; padding: 5px 10px; margin: 0 0 8px; }
+.draft-list li .reorder { position: relative; }
+.reorder .card-menu-button { border: 0; background: none; font-size: 20px; line-height: 1; padding: 4px 10px; border-radius: 50%; color: #4c5f54; }
+.reorder .card-menu-button:hover:not(:disabled), .reorder .card-menu-button[aria-expanded="true"] { background: #eef3ef; }
+.card-menu { position: absolute; right: 0; top: 100%; z-index: 6; min-width: 120px; padding: 6px 0; background: #fff; border: 1px solid #cfdad3; border-radius: 8px; box-shadow: 0 6px 20px #17382b33; display: flex; flex-direction: column; }
+.reorder .card-menu button { border: 0; background: none; border-radius: 0; text-align: left; padding: 9px 14px; font-size: 13px; white-space: nowrap; }
+.reorder .card-menu button:hover:not(:disabled) { background: #eef3ef; }
+.reorder .card-menu button.danger:not(:disabled) { color: #b3261e; }
