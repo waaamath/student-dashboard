@@ -5,6 +5,8 @@
 .video-list { list-style: none; padding: 0; display: grid; gap: 12px; }
 .video-list li { background: var(--surface); border: 1px solid var(--axis); border-radius: 14px; padding: 12px; }
 .video-list button { width: 100%; text-align: left; }
+.video-list .video-item-locked button { color: var(--muted); cursor: not-allowed; background: var(--surface); }
+.video-list .video-item-current { border-color: var(--accent); }
 .video-list small { display: block; margin: 8px 4px 0; color: var(--muted); }
 .video-progress { font-weight: 700; font-size: 1.3rem; }
 .video-eyebrow, .video-muted { color: var(--muted); }

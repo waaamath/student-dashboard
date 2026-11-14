@@ -9,7 +9,8 @@ const Video = (() => {
     appId: '1:863861496583:web:67cafde64a8351b7ca83a2',
   };
   let opts, sdkPromise, sdk, authSerial = Promise.resolve(), writesSerial = Promise.resolve(), generation = 0;
-  let token, sid, groups = [], events = [], overlay = new Map(), catalogs = new Map();
+  let token, sid, groups = [], events = [], overlay = new Map(), catalogs = new Map(), summary = {}, asks = [], resolved = [];
+  let recent = [], extras = new Map(), extraStops = new Map();
   let unsubs = [], eventUnsub, eventKey = '', status = 'idle', error = '', retryAction;
   let host, flow = null, player, playerTicket = 0, busy = false, readyEvents = false;
   let preview = null, ytPromise, shownSig = null, shownPage = null;
@@ -37,7 +38,10 @@ const Video = (() => {
     const merged = new Map(events.map(e => [e.id, e]));
     overlay.forEach((e, id) => merged.set(id, e));
     if (extra) merged.set(extra.id, extra);
-    return VideoLogic.derive(VideoLogic.recentGroups(groups), [...merged.values()]);
+    let s = summary;
+    if (s.version === 5) overlay.forEach(e => { s = VideoLogic.reportSummary(s, e); });
+    if (extra && s.version === 5) s = VideoLogic.reportSummary(s, extra);
+    return VideoLogic.derive(groups, [...merged.values(), ...asks, ...resolved], s);
   }
   function notify() {
     if (host && host.isConnected) render();
@@ -71,6 +75,7 @@ const Video = (() => {
     leave();
     generation++;
     unsubs.forEach(f => f()); unsubs = [];
+    extraStops.forEach(f => f()); extraStops.clear(); extras.clear(); recent = []; summary = {}; asks = []; resolved = [];
     if (eventUnsub) eventUnsub();
     eventUnsub = null; eventKey = ''; readyEvents = false;
     token = null; sid = null; groups = []; events = []; overlay = new Map(); catalogs = new Map();
@@ -123,11 +128,26 @@ const Video = (() => {
       await authSerial;
       if (gen !== generation) return;
       const s = sdk;
-      unsubs.push(s.onSnapshot(s.query(s.collection(s.db, 'students', sid, 'groups'), s.orderBy('seq')), snap => {
+      const listenError = () => { if (gen === generation) { status = 'error'; fail(); } };
+      unsubs.push(s.onSnapshot(s.doc(s.db, 'students', sid), snap => {
         if (gen !== generation) return;
-        groups = snap.docs.map(d => ({ ...d.data(), id: d.id }));
-        if (flow && !groups.some(g => g.id === flow.group.id && g.status === 'assigned' && g.items.some(i => i.gid === flow.item.gid))) leave();
-        const ids = VideoLogic.recentGroups(groups).map(g => g.id);
+        summary = snap.exists() ? snap.data() : {};
+        syncGroups(gen); refresh(gen);
+      }, listenError));
+      for (const [kind, filters] of [['ask', [s.where('type', '==', 'report'), s.where('result', '==', 'ask')]], ['resolve', [s.where('type', '==', 'resolve')]]]) {
+        unsubs.push(s.onSnapshot(s.query(s.collection(s.db, 'students', sid, 'events'), ...filters), snap => {
+          if (gen !== generation) return;
+          const rows = snap.docs.map(d => ({ ...d.data(), id: d.id }));
+          if (kind === 'ask') asks = rows; else resolved = rows;
+          notify();
+        }, listenError));
+      }
+      unsubs.push(s.onSnapshot(s.query(s.collection(s.db, 'students', sid, 'groups'), s.orderBy('seq', 'desc'), s.limit(10)), snap => {
+        if (gen !== generation) return;
+        recent = snap.docs.map(d => ({ ...d.data(), id: d.id }));
+        syncGroups(gen);
+        syncFlow();
+        const ids = recent.map(g => g.id);
         const key = JSON.stringify(ids);
         if (key !== eventKey) {
           eventKey = key; readyEvents = false;
@@ -145,6 +165,28 @@ const Video = (() => {
         refresh(gen);
       }, () => { if (gen === generation) { status = 'error'; fail(); } }));
     } catch (_) { if (gen === generation) { status = 'error'; fail(); } }
+  }
+  function syncGroups(gen) {
+    const wanted = new Set([...(summary.activeGroups || []).map(g => g.id), ...Object.values(summary.pendingAsks || {}).map(a => a.groupId)]
+      .filter(id => !recent.some(g => g.id === id)));
+    extraStops.forEach((stop, id) => { if (!wanted.has(id)) { stop(); extraStops.delete(id); extras.delete(id); } });
+    wanted.forEach(id => {
+      if (extraStops.has(id)) return;
+      extraStops.set(id, sdk.onSnapshot(sdk.doc(sdk.db, 'students', sid, 'groups', id), snap => {
+        if (gen !== generation || !extraStops.has(id)) return;
+        if (snap.exists()) extras.set(id, { ...snap.data(), id });
+        if (!snap.exists()) extras.delete(id);
+        groups = [...recent, ...extras.values()]; syncFlow(); refresh(gen);
+      }, () => { if (gen === generation) fail(); }));
+    });
+    groups = [...recent, ...extras.values()];
+  }
+  function syncFlow() {
+    if (!flow) return;
+    const group = groups.find(g => g.id === flow.group.id);
+    const item = group?.items.find(i => i.gid === flow.item.gid);
+    if (!group || group.status !== 'assigned' || !item) { leave(); return; }
+    flow.group = group; flow.item = item;
   }
   async function refresh(gen) {
     if (!readyEvents) return;
@@ -187,9 +229,13 @@ const Video = (() => {
     return el('button', { class: primary ? 'primary' : '', text, disabled: busy ? '' : null, on: { click } });
   }
   function list(group, d) {
-    return el('ul', { class: 'video-list' }, group.items.map((i, n) => el('li', null,
-      button(`${n + 1}. ${label(i)}${d.pending.some(e => e.gid === i.gid) ? '・待問老師' : i.done ? '・已完成' : ''}`, () => open(group, i)),
-      el('small', { text: place(i) }))));
+    return el('ul', { class: 'video-list' }, VideoLogic.itemAccess(group).map((i, n) => {
+      const locked = i.access === 'locked';
+      return el('li', { class: 'video-item-' + i.access },
+        el('button', { text: `${locked ? '🔒 ' : ''}${n + 1}. ${label(i)}・${i.access === 'done' ? '已完成' : locked ? '尚未解鎖' : '現在這個'}${d.pending.some(e => e.gid === i.gid) ? '・待問老師' : ''}`,
+          'aria-disabled': locked ? 'true' : null, on: { click: () => open(group, i) } }),
+        el('small', { text: place(i) }));
+    }));
   }
   function render() {
     if (!host) return;
@@ -220,7 +266,7 @@ const Video = (() => {
           el('small', { text: `第 ${flow.group.seq} 組・本組第 ${index} 個・${place(flow.item)}` }),
           plain(preview ? '▶ 播放' : '載入中…', startPlayer, { class: 'primary video-start' }),
           button('返回影片任務', () => { leave(); notify(); }),
-          el('small', { class: 'video-build', text: '版本 1113-6' })),
+          el('small', { class: 'video-build', text: '版本 1114-1' })),
         el('div', { class: 'video-bar' },
           plain('▶', togglePlayer, { class: 'video-toggle', 'aria-label': '暫停或播放' }),
           el('input', { class: 'video-seek', type: 'range', min: '0', max: '1000', value: '0', 'aria-label': '播放進度',
@@ -237,7 +283,8 @@ const Video = (() => {
         button('看懂了', () => report('ok'), true), button('再看一次', () => report('again')), button('還是不懂', () => report('ask'))));
     } else {
       const d = state(), g = d.current || d.lastCompleted;
-      if (!groups.length) nodes.push(el('h2', { text: '目前沒有影片任務' }));
+      if (!preview && summary.version !== 5) nodes.push(el('p', { text: '影片進度待同步，請老師更新摘要。' }));
+      else if (!groups.length) nodes.push(el('h2', { text: '目前沒有影片任務' }));
       else if (!d.current) nodes.push(el('h2', { text: g ? '這組完成了，等老師安排下一組' : '等待老師安排' }));
       if (g) {
         nodes.push(el('p', { class: 'video-progress', text: `第 ${g.seq} 組・${g.doneCount}/${g.items.length}` }));
@@ -246,10 +293,10 @@ const Video = (() => {
       }
       nodes.push(el('h3', { text: `待問老師（${d.askCount}）` }),
         ...d.pending.map(e => {
-          const g = d.groups.find(g => g.id === e.groupId), item = g.items.find(i => i.gid === e.gid);
+          const g = d.groups.find(g => g.id === e.groupId), item = g?.items.find(i => i.gid === e.gid);
+          if (!g || !item) return el('p', { text: `積木 ${e.gid}・待問老師` });
           return g.status === 'assigned' ? button(`${label(item)}・${place(item)}`, () => open(g, item)) : el('p', { text: `${label(item)}・待問老師（任務已收回）` });
         }));
-      if (groups.length > 30) nodes.push(el('p', { class: 'video-muted', text: '此頁進度與待問清單顯示最近 30 組。' }));
     }
     place_(nodes, status !== 'ready' ? 'loading' : flow ? `${flow.group.id}:${flow.item.gid}:${flow.page}` : 'list');
     immersive(!!(flow && flow.page === 'play' && status === 'ready'));
@@ -440,20 +487,32 @@ const Video = (() => {
       return;
     }
     const s = sdk, ref = s.doc(s.db, 'students', sid, 'events', event.id), student = s.doc(s.db, 'students', sid);
+    const studentId = sid, gen = generation;
     const { id, ...data } = event;
     // Stable event ID + transaction: a retry after a lost acknowledgement never duplicates a report.
     await enqueueWrite(() => s.runTransaction(s.db, async tx => {
+      if (gen !== generation) throw new Error('stale session');
+      const ss = await tx.get(student);
       const existing = await tx.get(ref);
+      const group = await tx.get(s.doc(s.db, 'students', studentId, 'groups', event.groupId));
+      if (!ss.exists() || ss.data().version !== 5 || !group.exists() || group.data().status !== 'assigned') throw new Error('summary/group unavailable');
       if (existing.exists()) {
         if (event.type === 'start') tx.update(student, summary(s));
         return;
       }
+      const next = VideoLogic.reportSummary(ss.data(), event);
+      if (gen !== generation) throw new Error('stale session');
       tx.set(ref, { ...data, at: s.serverTimestamp() });
-      tx.update(student, summary(s));
+      tx.update(student, { ...summary(s), activeGroups: next.activeGroups, understoodGids: next.understoodGids,
+        pendingAsks: next.pendingAsks, viewing: next.viewing, askCount: next.askCount, doneCount: next.doneCount });
     }));
   }
   async function open(group, item) {
-    if (busy || group.status !== 'assigned') return;
+    // Re-read current progress: an old DOM callback must not bypass the lock.
+    const latest = state().groups.find(g => g.id === group.id);
+    const target = latest && VideoLogic.itemAccess(latest).find(i => i.gid === item.gid);
+    if (busy || latest?.status !== 'assigned' || !target || target.access === 'locked') return;
+    group = latest; item = target;
     leave(); error = ''; flow = newFlow(group, item);
     flow.startId = preview ? 'preview-start-' + Date.now() : eventRef().id;
     await start(flow);
@@ -463,7 +522,7 @@ const Video = (() => {
     busy = true; notify();
     try {
       await persist({ id: f.startId, gid: f.item.gid, groupId: f.group.id, type: 'start', by: 'student', at: Date.now() },
-        s => ({ watchingGid: f.item.gid, watchingAt: s.serverTimestamp() }));
+        s => ({ watchingGid: f.item.gid, watchingLabel: label(f.item).slice(0, 80), watchingAt: s.serverTimestamp() }));
       if (gen !== generation || flow !== f) {
         // leave() already queued the clear after this start and before any later start.
         return;
@@ -493,12 +552,12 @@ const Video = (() => {
     };
     busy = true; error = ''; notify();
     try {
-      const d = state(f.reportEvent);
-      await persist(f.reportEvent, s => ({ watchingGid: null, doneCount: Math.min(1000, d.doneCount), askCount: Math.min(1000, d.askCount), lastEventAt: s.serverTimestamp() }));
+      await persist(f.reportEvent, s => ({ watchingGid: null, lastEventAt: s.serverTimestamp() }));
       if (gen !== generation || flow !== f) return;
       if (!events.some(e => e.id === f.reportEvent.id && e.at)) overlay.set(f.reportEvent.id, f.reportEvent);
       const nextState = state();
-      const group = nextState.groups.find(g => g.id === f.group.id);
+      const original = nextState.groups.find(g => g.id === f.group.id);
+      const group = result === 'again' ? original : nextState.current;
       flow = null; busy = false;
       if (result === 'again') { await open(group, f.item); return; }
       const next = group && group.status === 'assigned' && group.items.find(i => !i.done);
