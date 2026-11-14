@@ -5,6 +5,7 @@ const CLIENT_ID = '863861496583-i8ttdlflo03fscvcbvdc3hibqds4v7rn.apps.googleuser
 const API_URL = 'https://script.google.com/macros/s/AKfycbxvwBJFQMB-fsjs4Nbw1HhQVZVgcFqIWjOTiYAt04A-rviphe3xK7MmKCwluvJ8pAkv/exec';
 
 const DEFAULT_NAME = '學習進度';
+const NEW_LAYOUT_FOR_ALL = false;
 
 const app = document.getElementById('app');
 let idToken = null;    // 只放記憶體，關掉頁面就沒了
@@ -28,7 +29,11 @@ function el(tag, props, ...children) {
   return node;
 }
 
+let bottomNext = false;   // renderDashboard 在 show() 前設定；其他畫面一律沒有底部列
+
 function show(...nodes) {
+  setBottomLayout(bottomNext);
+  bottomNext = false;
   app.replaceChildren(...nodes.filter(Boolean));
   window.scrollTo(0, 0);
 }
@@ -285,8 +290,9 @@ function openDashboard(data) {
 /** 練習獸讀完或 XP 變了：只換分頁按鈕與首頁小卡，不重畫整頁（不跳回頂端、輸入框不失焦）。 */
 function refreshTabs() {
   if (!dashboard || selected === null) return;
-  const old = app.querySelector('.view-tabs');
-  if (old) old.replaceWith(viewTabs());
+  const bottom = useNewLayout();
+  const old = app.querySelector(bottom ? '.bottom-tabs' : '.view-tabs');
+  if (old) old.replaceWith(bottom ? bottomTabs() : viewTabs());
   const slot = app.querySelector('.home-pet-slot');
   if (slot) fillHomePet(slot, dashboard.students[selected] || dashboard.students[0]);
   const videoSlot = app.querySelector('.home-video-slot');
@@ -313,6 +319,24 @@ function fillHomePet(slot, st) {
 
 function petTab() {
   return hasPet() && dashboard && selected !== null && Pet.hasTab(selected, dashboard.students[selected]);
+}
+
+/** 新配置只開給學生本人；網址開關只由本機預覽頁提供。 */
+function useNewLayout() {
+  if (!dashboard || selected === null || dashboard.role === 'teacher') return false;
+  const st = dashboard.students[selected] || dashboard.students[0];
+  return !!st && st.relation === 'self' && (NEW_LAYOUT_FOR_ALL || videoTab()
+    || !!(window.DASHBOARD_PREVIEW && window.DASHBOARD_LAYOUT_PREVIEW));
+}
+
+/** 只有新版啟用安全區；其他身分的 viewport 與原版完全相同。 */
+function setBottomLayout(on) {
+  const wasOn = app.classList.contains('student-bottom-layout');
+  app.classList.toggle('student-bottom-layout', on);
+  if (wasOn === on) return;
+  const viewport = document.querySelector('meta[name="viewport"]');
+  if (viewport) viewport.content = on ? viewport.content + ', viewport-fit=cover'
+    : viewport.content.replace(', viewport-fit=cover', '');
 }
 
 /* 老師：學生清單。只重畫結果區，打字時輸入框不會失去焦點。 */
@@ -494,6 +518,30 @@ function viewTabs() {
     tab('home', '首頁'), videoTab() ? tab('video', '影片') : null, tab('work', '作業'), tab('wrong', '錯題'), petTab() ? tab('pet', '練習獸') : null);
 }
 
+function bottomTabs() {
+  const paths = {
+    home: 'M3 10 12 3l9 7M5 9v12h5v-7h4v7h5V9',
+    video: 'M4 4h16v16H4zM10 8l6 4-6 4z',
+    work: 'M8 5H5v16h14V5h-3M8 3h8v4H8zM8 12h8M8 16h6',
+    wrong: 'M4 3h12l4 4v14H4zM15 3v5h5M9 12l6 6M15 12l-6 6',
+    pet: 'M8 10 5 5l-2 8c0 5 4 8 9 8s9-3 9-8l-2-8-3 5M8 14h.01M16 14h.01M10 17q2 2 4 0',
+  };
+  const tab = (key, label) => {
+    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    Object.entries({ viewBox: '0 0 24 24', width: '24', height: '24', fill: 'none', stroke: 'currentColor',
+      'stroke-width': '1.8', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true', focusable: 'false' })
+      .forEach(([name, value]) => icon.setAttribute(name, value));
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', paths[key]);
+    icon.append(path);
+    return el('button', { type: 'button', 'aria-current': view === key ? 'page' : null,
+      on: { click: () => { view = key; renderDashboard(); } } }, icon, el('span', { text: label }));
+  };
+  return el('nav', { class: 'bottom-tabs', 'aria-label': '選擇內容' },
+    tab('home', '首頁'), videoTab() ? tab('video', '影片') : null,
+    tab('work', '作業'), tab('wrong', '錯題'), petTab() ? tab('pet', '練習獸') : null);
+}
+
 function homeSection(st) {
   const w = st.wrong;
   const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Taipei' });
@@ -502,6 +550,18 @@ function homeSection(st) {
   const count = period ? period.data.active : scoped ? '－' : w ? w.active : '－';
   const card = (key, title, value, caption) => el('button', { class: 'home-card', on: { click: () => { view = key; wrongPeriod = null; renderDashboard(); } } },
     el('span', { text: title }), el('strong', { text: value }), el('small', { text: caption + ' ›' }));
+  if (useNewLayout()) {
+    const videoSlot = el('div', { class: 'home-video-slot home-cards' });
+    fillHomeVideo(videoSlot, st);
+    const petSlot = el('div', { class: 'home-pet-slot' });
+    fillHomePet(petSlot, st);
+    const periodNote = period ? `${period.name} · ${period.start}～${period.end} · 查看本區間錯題`
+      : scoped ? '目前沒有可用的月考區間 · 查看歷史錯題' : '查看錯題整理';
+    return [videoTab() ? videoSlot : null,
+      el('div', { class: 'home-cards' },
+        card('work', '未繳作業', `${st.pending.length} 份`, '查看作業進度'),
+        card('wrong', '尚未過關', `${count} 題`, periodNote)), petSlot];
+  }
   return [
     el('section', { class: 'home-intro' }, el('h2', { text: '看看目前的學習進度' }),
       el('p', { text: period ? `${period.name} · ${period.start}～${period.end}` : scoped ? '目前沒有可用的月考區間' : '作業與錯題整理' })),
@@ -531,9 +591,11 @@ function renderDashboard() {
     return;
   }
   const st = dashboard.students[selected] || dashboard.students[0];
+  const bottom = useNewLayout();
   if (view === 'pet' && !petTab()) view = 'home';   // 換了沒開放的孩子
   if (view === 'video' && !videoTab()) view = 'home';
   if (typeof Video !== 'undefined' && view !== 'video') Video.afterRender(false);
+  bottomNext = bottom;
   show(
     topbar(),
     dashboard.role === 'teacher'
@@ -547,9 +609,9 @@ function renderDashboard() {
         })))
       : null,
     el('p', { class: 'who' }, st.name, st.className ? el('span', { text: st.className }) : null),
-    viewTabs(),
+    bottom ? null : viewTabs(),
     ...(view === 'home' ? homeSection(st) : view === 'wrong' ? wrongSection(st) : view === 'video' ? Video.section() : view === 'pet' ? Pet.section(selected, st) : workSection(st)),
-    footerNode());
+    footerNode(), bottom ? bottomTabs() : null);
   if (view === 'pet') Pet.afterRender();
   if (view === 'video') Video.afterRender(true);
 }
