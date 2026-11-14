@@ -89,3 +89,9 @@ select { width: 100%; background: #f8faf8; border: 1px solid #d7e2d9; padding: 9
 .draft-list .thumb-slot, .report-list .thumb-slot { flex: 0 0 100%; }
 .draft-list li > div, .report-list li > div { flex: 1; min-width: 100px; display: flex; flex-direction: column; gap: 4px; }
 .draft-list li .reorder { flex: 0 0 auto; flex-direction: row; min-width: 0; }
+.draft-list li[draggable="true"] { cursor: grab; }
+.draft-list li[draggable="true"] .thumb-slot { cursor: grab; }
+.draft-list li.dragging { opacity: .4; }
+.draft-list li.drop-before { box-shadow: 0 -3px 0 #1f6b4f; }
+.draft-list li.drop-after { box-shadow: 0 3px 0 #1f6b4f; }
+.grip { color: #9aa9a0; font-size: 16px; line-height: 1; padding: 4px 2px; user-select: none; }

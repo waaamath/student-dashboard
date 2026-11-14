@@ -54,6 +54,7 @@
     });
     let sdk, sdkPromise, authSerial = Promise.resolve(), generation = 0, unsubs = [], watchSerial = 0;
     let token, roster = [], selected = null, records = new Map(), catalogs = new Map(), catalogLoads = new Map(), chapters = [], chapterKey = '';
+    let dragFrom = null, renderQueued = false;
     let draft = [], pendingAssign = null, resolves = new Map(), busy = false, ready = false, message = '', error = '', retry;
     let detailStops = [], detailTicket = 0, detailRefresh, checked = new Set(), unlocked = new Set(), templates = [], modal = null;
     let filter = 'today', classFilter = '', today = [], scheduleReason = '', batch = null, previewMode = false;
@@ -368,14 +369,24 @@
       if (!canEdit(next)) return;
       draft = next; render();
     }
-    function dropDraft(event, to) {
-      event.preventDefault();
+    // 拖移排序：把第 from 張卡片放到第 target 張的上方或下方（after）。
+    function moveTo(from, target, after = false) {
       if (busy || pendingAssign || pendingEdit || batch) return;
-      const from = Number(event.dataTransfer.getData('text/plain'));
-      if (!Number.isInteger(from) || !draft[from] || from === to) return;
+      if (!Number.isInteger(from) || !draft[from] || !draft[target]) return;
+      let to = target + (after ? 1 : 0); if (from < to) to--;
+      if (from === to) return;
       const next = [...draft], [item] = next.splice(from, 1); next.splice(to, 0, item);
       if (!canEdit(next)) return;
       draft = next; render();
+    }
+    const lowerHalf = (e, li) => { const r = li.getBoundingClientRect?.(); return !!r && e.clientY > r.top + r.height / 2; };
+    function dropMark(li, after) {
+      doc.querySelectorAll?.('.drop-before, .drop-after').forEach(n => n.classList.remove('drop-before', 'drop-after'));
+      if (li) li.classList?.add(after ? 'drop-after' : 'drop-before');
+    }
+    function endDrag() {
+      dropMark(null); dragFrom = null;
+      if (renderQueued) { renderQueued = false; render(); }
     }
     async function transactionGroups(tx, sid) {
       // Web SDK transactions accept document refs, not queries. Read the summary first,
@@ -825,15 +836,18 @@
               const next = [...draft]; [next[index], next[index + delta]] = [next[index + delta], next[index]];
               return canEdit(next, false);
             };
-            return el('li', { draggable: String(!blocked && !locked), on: {
-              dragstart: e => { e.dataTransfer.setData('text/plain', String(index)); e.dataTransfer.effectAllowed = 'move'; },
-              dragover: e => e.preventDefault(), drop: e => dropDraft(e, index) } },
+            const li = el('li', { draggable: String(!blocked && !locked), class: locked ? 'is-locked' : null, on: {
+              dragstart: e => { dragFrom = index; closeThumb(); e.dataTransfer.setData('text/plain', String(index)); e.dataTransfer.effectAllowed = 'move'; li.classList?.add('dragging'); },
+              dragover: e => { if (dragFrom === null) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; dropMark(dragFrom === index ? null : li, lowerHalf(e, li)); },
+              drop: e => { if (dragFrom === null) return; e.preventDefault(); const from = dragFrom, after = lowerHalf(e, li); endDrag(); moveTo(from, index, after); },
+              dragend: endDrag } },
               thumbnail(i), el('div', null, el('strong', { text: label(i) }), el('small', { text: place(i) }),
                 locked ? el('small', { class: 'reported-lock', text: '🔒 已有回報紀錄' }) : null,
                 !multiple() ? el('small', { class: 'viewing', text: viewing(i, d) }) : null),
-              el('div', { class: 'reorder' }, button('↑', () => move(index, -1), { id: 'up-' + index, disabled: blocked || !movable(-1), 'aria-label': `上移第 ${index + 1} 個積木` }),
+              el('div', { class: 'reorder' }, !locked ? el('span', { class: 'grip', 'aria-hidden': 'true', title: '按住卡片拖移可以調整順序', text: '⠿' }) : null, button('↑', () => move(index, -1), { id: 'up-' + index, disabled: blocked || !movable(-1), 'aria-label': `上移第 ${index + 1} 個積木` }),
                 button('↓', () => move(index, 1), { id: 'down-' + index, disabled: blocked || !movable(1), 'aria-label': `下移第 ${index + 1} 個積木` }),
                 button('移除', () => toggle(i, false), { disabled: blocked || locked, title: locked ? '已有回報紀錄' : '', 'aria-label': `移除第 ${index + 1} 個積木` })));
+            return li;
           })),
           el('div', { class: 'assign-bar' }, el('p', { text: `影片總長 ${duration(total)}${missing ? `（${missing} 個缺長度，未計入）` : ''}` }),
             editing ? [button('儲存這組', saveGroup, { class: 'primary', disabled: busy || !draft.length }),
@@ -911,6 +925,8 @@
         button('取消', () => { if (modal?.type === 'batch' && !batch.some(o => o.result === 'success' || o.result === 'failed')) batch = null; cancelDialog(); }, { id: 'dialog-cancel', disabled: busy }));
     }
     function render() {
+      // 拖移中重畫會中斷拖移，延到放開後再畫。
+      if (dragFrom !== null) { renderQueued = true; return; }
       if (!thumbPopup?.pinned) closeThumb();
       thumbObserver?.disconnect(); thumbNodes = [];
       const focus = doc.activeElement?.id;
@@ -965,7 +981,7 @@
       win.addEventListener('beforeunload', e => { if (dirty() || busy || pendingEdit) { e.preventDefault(); e.returnValue = ''; } });
       win.setInterval(() => { if (ready && !busy) render(); }, 30000);
     }
-    return { init, load, signOut, select, toggle, move, assign, resolve, chooseChapter, preview, checkStudent, cancelDialog, beginEdit, endEdit, saveGroup,
+    return { init, load, signOut, select, toggle, move, moveTo, assign, resolve, chooseChapter, preview, checkStudent, cancelDialog, beginEdit, endEdit, saveGroup,
       prepareBatch, sendBatch, retryBatch, changeGroup, applyTemplate, continueLast };
   }
   return { create };
