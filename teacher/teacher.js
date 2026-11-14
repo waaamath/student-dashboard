@@ -384,7 +384,32 @@
       doc.querySelectorAll?.('.drop-before, .drop-after').forEach(n => n.classList.remove('drop-before', 'drop-after'));
       if (li) li.classList?.add(after ? 'drop-after' : 'drop-before');
     }
+    // 拖到欄位上下邊緣時自動捲動；上下各留出固定的橫幅與按鈕列。
+    function dragScroll(e) {
+      const column = doc.getElementById('selected-column'), r = column?.getBoundingClientRect?.();
+      if (dragFrom === null || !r) return;
+      const zone = Math.min(120, r.height / 3), top = e.clientY - r.top, bottom = r.bottom - e.clientY;
+      if (top < zone) column.scrollTop -= Math.ceil((zone - Math.max(top, 0)) / zone * 36);
+      else if (bottom < zone) column.scrollTop += Math.ceil((zone - Math.max(bottom, 0)) / zone * 36);
+    }
+    // 依講義順序排序。已回報的積木位置固定，只排它前後各段，不會越過它。
+    function sortDraft() {
+      if (busy || pendingAssign || pendingEdit || batch || draft.length < 2) return;
+      const fixed = new Set(editProgress().filter(i => i.done).map(i => i.gid));
+      const key = i => {
+        const id = `${i.book}_${i.chapter}`, c = chapters.findIndex(x => x.id === id), n = catalogs.get(id)?.items.findIndex(x => x.gid === i.gid) ?? -1;
+        return [c < 0 ? 1e9 : c, n < 0 ? 1e9 : n, i.gid];
+      };
+      const order = (a, b) => { const x = key(a), y = key(b); return x[0] - y[0] || x[1] - y[1] || x[2] - y[2]; };
+      const next = []; let part = [];
+      for (const i of draft) { if (fixed.has(i.gid)) { next.push(...part.sort(order), i); part = []; } else part.push(i); }
+      next.push(...part.sort(order));
+      if (next.every((i, n) => i.gid === draft[n].gid)) { message = '已經是講義順序。'; render(); return; }
+      if (!canEdit(next)) return;
+      draft = next; message = fixed.size ? '已依講義順序排序；已有回報紀錄的積木位置不變。' : '已依講義順序排序。'; render();
+    }
     function endDrag() {
+      doc.removeEventListener?.('dragover', dragScroll);
       dropMark(null); dragFrom = null;
       if (renderQueued) { renderQueued = false; render(); }
     }
@@ -829,6 +854,7 @@
             el('select', { 'aria-label': '插入位置', value: insertBefore ?? '', on: { change: e => { insertBefore = e.target.value === '' ? null : Number(e.target.value); } } },
               el('option', { value: '', text: '加在最後', selected: insertBefore === null }),
               draft.map((i, n) => el('option', { value: i.gid, selected: insertBefore === i.gid, text: `插在第 ${n + 1} 個之前・${label(i)}` })))) : null,
+          draft.length > 1 ? button('依講義順序排序', sortDraft, { id: 'sort-draft', class: 'sort-draft', disabled: busy || !!pendingAssign || !!pendingEdit || !!batch, title: '把這組積木排回講義裡原本的先後順序' }) : null,
           !draft.length ? el('p', { class: 'draft-empty', text: '從右欄勾選積木，依勾選順序加入。' }) : el('ol', { class: 'draft-list' }, draft.map((i, index) => {
             const locked = lockedGids.has(i.gid), blocked = busy || !!pendingAssign || !!pendingEdit || !!batch;
             const movable = delta => {
@@ -837,7 +863,7 @@
               return canEdit(next, false);
             };
             const li = el('li', { draggable: String(!blocked && !locked), class: locked ? 'is-locked' : null, on: {
-              dragstart: e => { dragFrom = index; closeThumb(); e.dataTransfer.setData('text/plain', String(index)); e.dataTransfer.effectAllowed = 'move'; li.classList?.add('dragging'); },
+              dragstart: e => { dragFrom = index; closeThumb(); doc.addEventListener?.('dragover', dragScroll); e.dataTransfer.setData('text/plain', String(index)); e.dataTransfer.effectAllowed = 'move'; li.classList?.add('dragging'); },
               dragover: e => { if (dragFrom === null) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; dropMark(dragFrom === index ? null : li, lowerHalf(e, li)); },
               drop: e => { if (dragFrom === null) return; e.preventDefault(); const from = dragFrom, after = lowerHalf(e, li); endDrag(); moveTo(from, index, after); },
               dragend: endDrag } },
@@ -981,7 +1007,7 @@
       win.addEventListener('beforeunload', e => { if (dirty() || busy || pendingEdit) { e.preventDefault(); e.returnValue = ''; } });
       win.setInterval(() => { if (ready && !busy) render(); }, 30000);
     }
-    return { init, load, signOut, select, toggle, move, moveTo, assign, resolve, chooseChapter, preview, checkStudent, cancelDialog, beginEdit, endEdit, saveGroup,
+    return { init, load, signOut, select, toggle, move, moveTo, sortDraft, assign, resolve, chooseChapter, preview, checkStudent, cancelDialog, beginEdit, endEdit, saveGroup,
       prepareBatch, sendBatch, retryBatch, changeGroup, applyTemplate, continueLast };
   }
   return { create };
