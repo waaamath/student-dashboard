@@ -18,6 +18,8 @@
 .video-error { padding: 16px; border-radius: 12px; background: var(--pending-bg); color: var(--pending); margin-bottom: 16px; }
 .home-video-slot { margin-top: 12px; }
 .video-card { grid-column: 1 / -1; }
+.video-parent-card { min-width: 0; border-radius: 12px; background: var(--surface); }
+.video-parent-card strong { font-size: 20px; line-height: 1.6; overflow-wrap: anywhere; }
 
 /* 播放頁：蓋滿螢幕、鎖住捲動與縮放。播放中只有影片和底下的時間條。 */
 .video-section { touch-action: manipulation; }

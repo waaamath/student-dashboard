@@ -5,7 +5,7 @@ const CLIENT_ID = '863861496583-i8ttdlflo03fscvcbvdc3hibqds4v7rn.apps.googleuser
 const API_URL = 'https://script.google.com/macros/s/AKfycbxvwBJFQMB-fsjs4Nbw1HhQVZVgcFqIWjOTiYAt04A-rviphe3xK7MmKCwluvJ8pAkv/exec';
 
 const DEFAULT_NAME = '學習進度';
-const NEW_LAYOUT_FOR_ALL = false;
+const NEW_LAYOUT_FOR_ALL = true;
 
 const app = document.getElementById('app');
 let idToken = null;    // 只放記憶體，關掉頁面就沒了
@@ -305,7 +305,8 @@ function videoTab() {
 
 function fillHomeVideo(slot, st) {
   const card = typeof Video !== 'undefined' && Video.hasTab(st)
-    ? Video.homeCard(() => { view = 'video'; renderDashboard(); }) : null;
+    ? Video.homeCard(() => { view = 'video'; renderDashboard(); })
+    : typeof Video !== 'undefined' ? Video.parentCard(st) : null;
   slot.replaceChildren(...(card ? [card] : []));
 }
 
@@ -568,7 +569,8 @@ function homeSection(st) {
     el('div', { class: 'home-cards' },
       card('work', '未繳作業', `${st.pending.length} 份`, '查看作業進度'),
       card('wrong', '尚未過關', `${count} 題`, period ? '查看本區間錯題' : scoped ? '查看歷史錯題' : '查看錯題整理')),
-    ...(videoTab() ? [(() => { const slot = el('div', { class: 'home-video-slot home-cards' }); fillHomeVideo(slot, st); return slot; })()] : []),
+    ...(videoTab() || (typeof Video !== 'undefined' && Video.hasParentCard(st))
+      ? [(() => { const slot = el('div', { class: 'home-video-slot home-cards' }); fillHomeVideo(slot, st); return slot; })()] : []),
     (() => { const slot = el('div', { class: 'home-pet-slot' }); fillHomePet(slot, st); return slot; })(),
     el('h2', { text: '現在先處理' }),
     listOrEmpty(st.pending.slice(0, 3), '目前沒有未繳作業。'),
@@ -591,6 +593,7 @@ function renderDashboard() {
     return;
   }
   const st = dashboard.students[selected] || dashboard.students[0];
+  if (typeof Video !== 'undefined') Video.selectParent(idToken, dashboard.role === 'teacher' ? null : st);
   const bottom = useNewLayout();
   if (view === 'pet' && !petTab()) view = 'home';   // 換了沒開放的孩子
   if (view === 'video' && !videoTab()) view = 'home';

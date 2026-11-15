@@ -1,6 +1,6 @@
 'use strict';
 
-// Optional module. Loading this file never loads Firebase; only load() does.
+// Optional module. Firebase loads only for a pilot student or a selected pilot child.
 const Video = (() => {
   const CONFIG = {
     apiKey: 'AIzaSyDLKj9cZ0ZM4kKlR2IUtodVnEOzsKiKB5o',
@@ -15,10 +15,13 @@ const Video = (() => {
   let host, flow = null, player, playerTicket = 0, busy = false, readyEvents = false;
   let preview = null, ytPromise, shownSig = null, shownPage = null;
   let playerReady = false, ticker = null, seeking = false, viewportBefore = null;
+  // Parent summaries have their own lifecycle; never enter the student's read/write flow.
+  let parentGeneration = 0, parentStop, parentTimer, parentSid = null, parentToken = null;
+  let parentStatus = 'idle', parentSummary = null;
 
   function init(o) {
     opts = o;
-    window.addEventListener('pagehide', () => leave());
+    window.addEventListener('pagehide', () => { leave(); resetParent(); });
     ['resize', 'orientationchange'].forEach(name => window.addEventListener(name, () => { fitClip(); setTimeout(fitClip, 300); }));
     ['fullscreenchange', 'webkitfullscreenchange'].forEach(name => document.addEventListener(name, () => {
       // 跳出全螢幕（例如按手機的返回鍵）就當作看到這裡，直接進回報頁。
@@ -72,6 +75,7 @@ const Video = (() => {
     return value;
   }
   function reset() {
+    resetParent();
     leave();
     generation++;
     unsubs.forEach(f => f()); unsubs = [];
@@ -89,6 +93,96 @@ const Video = (() => {
     });
     return authSerial;
   }
+  // One SDK and one serialized Google credential login for both roles.
+  function login(idToken, live, afterLogin = () => {}) {
+    authSerial = authSerial.catch(() => {}).then(async () => {
+      const s = await firebase();
+      if (!live()) return;
+      await s.auth.authStateReady();
+      const sub = subFromToken(idToken);
+      if (s.auth.currentUser) {
+        const r = await s.auth.currentUser.getIdTokenResult();
+        const ids = r.claims.firebase && r.claims.firebase.identities;
+        if (!ids || !ids['google.com'] || ids['google.com'][0] !== sub) await s.signOut(s.auth);
+      }
+      if (!live()) return;
+      await s.signInWithCredential(s.auth, s.GoogleAuthProvider.credential(idToken));
+      if (!live()) return;
+      await afterLogin(s, sub);
+    });
+    return authSerial;
+  }
+  const hasParentCard = st => !!st && st.relation === 'parent' && typeof st.videoId === 'string'
+    && !!st.videoId && !st.videoId.includes('/');
+  function resetParent() {
+    parentGeneration++;
+    if (parentStop) parentStop();
+    if (parentTimer) clearTimeout(parentTimer);
+    parentStop = null; parentTimer = null; parentSid = null; parentToken = null;
+    parentSummary = null; parentStatus = 'idle';
+  }
+  function selectParent(idToken, st) {
+    if (!hasParentCard(st)) { resetParent(); return; }
+    if (parentSid === st.videoId && parentToken === idToken) return;
+    loadParent(idToken, st);
+  }
+  async function loadParent(idToken, st, attempt = 0) {
+    resetParent();
+    parentSid = st.videoId; parentToken = idToken; parentStatus = 'loading';
+    const gen = parentGeneration, live = () => gen === parentGeneration;
+    const changed = () => { if (live()) opts.changed(); };
+    const failed = e => {
+      if (!live()) return;
+      if (parentStop) parentStop();
+      parentStop = null;
+      // A login-time passport write may still be pending. Retry the same summary only.
+      if (e?.code === 'permission-denied' && attempt < 2) {
+        parentStatus = 'loading';
+        parentTimer = setTimeout(() => {
+          if (live()) loadParent(idToken, st, attempt + 1);
+        }, 1000 * (attempt + 1));
+      } else parentStatus = 'error';
+      changed();
+    };
+    try {
+      if (window.VIDEO_PARENT_PREVIEW) {
+        const p = window.VIDEO_PARENT_PREVIEW[st.videoId];
+        parentStatus = p.status; parentSummary = p.summary;
+        changed(); return;
+      }
+      await login(idToken, live);
+      if (!live()) return;
+      // No access read, collection queries, catalog, groups, events, videos, or writes.
+      parentStop = sdk.onSnapshot(sdk.doc(sdk.db, 'students', st.videoId), snap => {
+        if (!live()) return;
+        try {
+          parentSummary = snap.exists() ? snap.data() : null;
+          parentStatus = 'ready';
+          // Validate presentation here so a malformed summary affects this card alone.
+          parentText();
+        } catch (_) { parentStatus = 'error'; }
+        changed();
+      }, failed);
+    } catch (e) { failed(e); }
+  }
+  function parentText() {
+    if (parentStatus === 'loading' || parentStatus === 'idle') return '讀取中';
+    if (parentStatus === 'error') return '影片進度暫時讀不到';
+    if (!parentSummary) return '目前沒有影片任務';
+    const d = VideoLogic.summaryStatus(parentSummary);
+    if (!d.known) return '資料同步中';
+    const ask = d.askCount ? `・待問 ${d.askCount}` : '';
+    if (d.current) return `第 ${d.current.seq} 組・完成 ${d.current.doneGids.length}/${d.current.gids.length}${ask}`;
+    return parentSummary.lastAssignedGroupId ? `等老師安排下一組${ask}` : '目前沒有影片任務';
+  }
+  function parentCard(st) {
+    if (!hasParentCard(st)) return null;
+    return el('div', { class: 'home-card video-card video-parent-card', role: 'status' },
+      el('span', { text: '影片' }), el('strong', { text: parentText() }),
+      parentStatus === 'error' ? el('button', { type: 'button', text: '重試', on: { click: () => {
+        const loading = loadParent(parentToken, st); opts.changed(); return loading;
+      } } }) : null);
+  }
   async function load(idToken) {
     reset(); token = idToken; status = 'loading';
     const gen = generation;
@@ -104,19 +198,7 @@ const Video = (() => {
     }
     notify();
     try {
-      authSerial = authSerial.catch(() => {}).then(async () => {
-        const s = await firebase();
-        if (gen !== generation) return;
-        await s.auth.authStateReady();
-        const sub = subFromToken(idToken);
-        if (s.auth.currentUser) {
-          const r = await s.auth.currentUser.getIdTokenResult();
-          const ids = r.claims.firebase && r.claims.firebase.identities;
-          if (!ids || !ids['google.com'] || ids['google.com'][0] !== sub) await s.signOut(s.auth);
-        }
-        if (gen !== generation) return;
-        await s.signInWithCredential(s.auth, s.GoogleAuthProvider.credential(idToken));
-        if (gen !== generation) return;
+      login(idToken, () => gen === generation, async (s, sub) => {
         const access = await s.getDocFromServer(s.doc(s.db, 'access', sub));
         if (gen !== generation) return;
         const self = access.exists() && access.data().self;
@@ -266,7 +348,7 @@ const Video = (() => {
           el('small', { text: `第 ${flow.group.seq} 組・本組第 ${index} 個・${place(flow.item)}` }),
           plain(preview ? '▶ 播放' : '載入中…', startPlayer, { class: 'primary video-start' }),
           button('返回影片任務', () => { leave(); notify(); }),
-          el('small', { class: 'video-build', text: '版本 1114-1' })),
+          el('small', { class: 'video-build', text: '版本 1114-2' })),
         el('div', { class: 'video-bar' },
           plain('▶', togglePlayer, { class: 'video-toggle', 'aria-label': '暫停或播放' }),
           el('input', { class: 'video-seek', type: 'range', min: '0', max: '1000', value: '0', 'aria-label': '播放進度',
@@ -623,5 +705,6 @@ const Video = (() => {
       });
     } catch (_) { if (flow === f) fail(() => { render(); }); }
   }
-  return { init, load, reset, signOut, hasTab, section, homeCard, afterRender, leave };
+  return { init, load, reset, signOut, hasTab, section, homeCard, afterRender, leave,
+    hasParentCard, selectParent, parentCard };
 })();
