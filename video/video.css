@@ -9,6 +9,13 @@
 .video-list .video-item-current { border-color: var(--accent); }
 .video-list small { display: block; margin: 8px 4px 0; color: var(--muted); }
 .video-progress { font-weight: 700; font-size: 1.3rem; }
+.video-section > button:not(.primary) { margin: 4px 0; }
+.video-done-chapter { margin: 12px 0; border: 1px solid var(--axis); border-radius: 14px; background: var(--surface); }
+.video-done-chapter > summary { min-height: 48px; display: flex; align-items: center; gap: 8px; padding: 0 16px; font-weight: 700; cursor: pointer; list-style: none; }
+.video-done-chapter > summary::-webkit-details-marker { display: none; }
+.video-done-chapter > summary::before { content: '▸'; color: var(--muted); }
+.video-done-chapter[open] > summary::before { content: '▾'; }
+.video-done-chapter > .video-list { margin: 0; padding: 0 12px 12px; }
 .video-eyebrow, .video-muted { color: var(--muted); }
 .video-player { width: 100%; aspect-ratio: 16/9; background: #101b2b; margin: 20px 0; border-radius: 12px; overflow: hidden; }
 .video-player iframe { width: 100%; height: 100%; border: 0; }

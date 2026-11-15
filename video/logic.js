@@ -193,11 +193,31 @@
     const at = Math.max(Date.now(), ...events.map(e => millis(e.at))) + 1;
     return derive(recentGroups(groups), [...events, { ...event, at }]).askCount;
   }
+  // 已完成清單：derive() 結果中各 assigned 組已完成的積木，依冊章分組、同 gid 只留一筆。
+  // 重看會寫入事件，所以必須選「該積木已完成」的組（同一 gid 可能又在新組裡尚未完成）；
+  // 多組都完成時取最近指派的（createdAt，再看 seq）。收回的組不列入，規則也不准寫入。
+  function doneLibrary(groups, rank = item => item.gid) {
+    const best = new Map(), newer = (a, b) => millis(a.createdAt) - millis(b.createdAt) || a.seq - b.seq;
+    groups.filter(g => g.status === 'assigned').forEach(g => g.items.forEach(item => {
+      if (!item.done) return;
+      const old = best.get(item.gid);
+      if (!old || newer(g, old.group) > 0) best.set(item.gid, { group: g, item });
+    }));
+    const chapters = new Map();
+    best.forEach(entry => {
+      const { book, chapter } = entry.item, key = `${book}_${chapter}`;
+      if (!chapters.has(key)) chapters.set(key, { key, book, chapter, entries: [] });
+      chapters.get(key).entries.push(entry);
+    });
+    return [...chapters.values()]
+      .sort((a, b) => String(a.book).localeCompare(String(b.book), 'en', { numeric: true }) || Number(a.chapter) - Number(b.chapter))
+      .map(c => ({ ...c, entries: c.entries.sort((a, b) => rank(a.item) - rank(b.item) || a.item.gid - b.item.gid) }));
+  }
   function bookLabel(book) {
     const m = /^(re|j)?sb(\d+)(B?)$/.exec(book || '');
     return !m ? book || '其他' : m[1] === 're' ? `學測複習講義part${m[2]}${m[3]}`
       : `${m[1] === 'j' ? '國中' : ''}第${m[2]}冊${m[3]}`;
   }
-  return { derive, itemAccess, groupEditProgress, validateGroupEdit, insertGroupItem, editedGroupSummary, reopensGroup, millis, orderGroups, recentGroups, studentStatus, itemMarks, askCountAfterResolve, bookLabel,
+  return { derive, itemAccess, groupEditProgress, validateGroupEdit, insertGroupItem, editedGroupSummary, reopensGroup, millis, orderGroups, recentGroups, studentStatus, itemMarks, askCountAfterResolve, bookLabel, doneLibrary,
     summaryFrom, summaryStatus, assignmentSeq, assignedSummary, reportSummary, batchPlan, continuation, shortPlayback };
 });

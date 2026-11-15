@@ -15,6 +15,9 @@ const Video = (() => {
   let host, flow = null, player, playerTicket = 0, busy = false, readyEvents = false;
   let preview = null, ytPromise, shownSig = null, shownPage = null;
   let playerReady = false, ticker = null, seeking = false, viewportBefore = null;
+  // 已完成清單：screen 決定沒有播放時顯示哪一頁；library 是點開時讀一次的全部組（不監聽）。
+  // reviewId 讓重看的舊組在播放期間跟著監聽，組被收回時 syncFlow 會照常離開。
+  let screen = 'list', library = null, reviewId = null, libraryTicket = 0, openChapters = new Set();
   // Parent summaries have their own lifecycle; never enter the student's read/write flow.
   let parentGeneration = 0, parentStop, parentTimer, parentSid = null, parentToken = null;
   let parentStatus = 'idle', parentSummary = null;
@@ -37,14 +40,14 @@ const Video = (() => {
   }
   const hasTab = st => !!st && st.video === true;
   const now = () => performance.now();
-  function state(extra) {
+  function state(extra, list = groups) {
     const merged = new Map(events.map(e => [e.id, e]));
     overlay.forEach((e, id) => merged.set(id, e));
     if (extra) merged.set(extra.id, extra);
     let s = summary;
     if (s.version === 5) overlay.forEach(e => { s = VideoLogic.reportSummary(s, e); });
     if (extra && s.version === 5) s = VideoLogic.reportSummary(s, extra);
-    return VideoLogic.derive(groups, [...merged.values(), ...asks, ...resolved], s);
+    return VideoLogic.derive(list, [...merged.values(), ...asks, ...resolved], s);
   }
   function notify() {
     if (host && host.isConnected) render();
@@ -84,6 +87,7 @@ const Video = (() => {
     eventUnsub = null; eventKey = ''; readyEvents = false;
     token = null; sid = null; groups = []; events = []; overlay = new Map(); catalogs = new Map();
     flow = null; if (host) host.replaceChildren(); shownSig = null; shownPage = null; busy = false; status = 'idle'; error = ''; retryAction = null; preview = null;
+    screen = 'list'; library = null; reviewId = null; libraryTicket++; openChapters = new Set();
   }
   async function signOut() {
     reset();
@@ -249,8 +253,8 @@ const Video = (() => {
     } catch (_) { if (gen === generation) { status = 'error'; fail(); } }
   }
   function syncGroups(gen) {
-    const wanted = new Set([...(summary.activeGroups || []).map(g => g.id), ...Object.values(summary.pendingAsks || {}).map(a => a.groupId)]
-      .filter(id => !recent.some(g => g.id === id)));
+    const wanted = new Set([...(summary.activeGroups || []).map(g => g.id), ...Object.values(summary.pendingAsks || {}).map(a => a.groupId), reviewId]
+      .filter(id => id && !recent.some(g => g.id === id)));
     extraStops.forEach((stop, id) => { if (!wanted.has(id)) { stop(); extraStops.delete(id); extras.delete(id); } });
     wanted.forEach(id => {
       if (extraStops.has(id)) return;
@@ -319,6 +323,63 @@ const Video = (() => {
         el('small', { text: place(i) }));
     }));
   }
+  function rank(item) {
+    const chapter = catalogs.get(`${item.book}_${item.chapter}`);
+    const index = chapter ? chapter.items.findIndex(i => i.gid === item.gid) : -1;
+    return index < 0 ? 1e9 + item.gid : index;
+  }
+  /** 點開才讀一次全部組與相關 catalog；之後完成狀態跟著即時摘要更新，新指派的組要重新點開才會出現。 */
+  async function openLibrary() {
+    if (busy) return;
+    const gen = generation, ticket = ++libraryTicket;
+    screen = 'done'; library = null; error = ''; notify();
+    try {
+      let all;
+      if (preview) all = preview.groups;
+      else {
+        const snap = await sdk.getDocsFromServer(sdk.query(sdk.collection(sdk.db, 'students', sid, 'groups'), sdk.orderBy('seq', 'desc')));
+        all = snap.docs.map(d => ({ ...d.data(), id: d.id }));
+      }
+      if (gen !== generation || ticket !== libraryTicket) return;
+      const keys = new Set(VideoLogic.doneLibrary(state(null, all).groups).map(c => c.key));
+      await Promise.all([...keys].filter(key => !catalogs.has(key)).map(async key => {
+        // 缺目錄只影響名稱（改顯示「積木 gid」），不讓整份清單讀不到。
+        const d = await sdk.getDocFromServer(sdk.doc(sdk.db, 'catalog', key));
+        if (d.exists() && gen === generation) catalogs.set(key, d.data());
+      }));
+      if (gen !== generation || ticket !== libraryTicket) return;
+      library = { all, raw: new Map(all.map(g => [g.id, g])) };
+      notify();
+    } catch (_) { if (gen === generation && ticket === libraryTicket) fail(() => openLibrary()); }
+  }
+  function libraryPage() {
+    const nodes = [button('返回影片任務', () => { libraryTicket++; screen = 'list'; reviewId = null; notify(); }), el('h2', { text: '已完成清單' })];
+    if (!library) return [...nodes, el('p', { text: '正在讀取已完成的影片…' })];
+    if (!preview && summary.version !== 5) return [...nodes, el('p', { text: '影片進度待同步，請老師更新摘要。' })];
+    const d = state(null, library.all), chapters = VideoLogic.doneLibrary(d.groups, rank);
+    if (!chapters.length) return [...nodes, el('p', { text: '還沒有看完的影片。' })];
+    const pending = new Set(d.pending.map(e => e.gid));
+    nodes.push(el('p', { class: 'video-muted', text: '看完回報過的影片依章節整理，想複習可以點進去重看。' }));
+    chapters.forEach(c => nodes.push(el('details', { class: 'video-done-chapter', open: chapters.length === 1 || openChapters.has(c.key) ? '' : null,
+      on: { toggle: e => { if (e.target.open) openChapters.add(c.key); else openChapters.delete(c.key); } } },
+      el('summary', { text: `${VideoLogic.bookLabel(c.book)}・第 ${c.chapter} 章（${c.entries.length}）` }),
+      el('ul', { class: 'video-list' }, c.entries.map(({ group, item }) => {
+        const m = metadata(item);
+        return el('li', { class: 'video-item-done' },
+          el('button', { text: `${label(item)}${pending.has(item.gid) ? '・待問老師' : ''}`, on: { click: () => openReview(group.id, item.gid) } }),
+          m ? el('small', { text: `第 ${m.section} 節` }) : null);
+      })))));
+    return nodes;
+  }
+  async function openReview(groupId, gid) {
+    if (busy || !library) return;
+    const raw = library.raw.get(groupId), item = raw && raw.items.find(i => i.gid === gid);
+    if (!item) return;
+    reviewId = groupId;
+    // 舊組不在最近 10 組的監聽裡：先放進 extras 讓 open() 找得到，syncGroups 會補上這一組的監聽。
+    if (!preview && !groups.some(g => g.id === groupId)) { extras.set(groupId, raw); syncGroups(generation); }
+    await open(raw, item, true);
+  }
   function render() {
     if (!host) return;
     // Keep an active iframe in place when unrelated dashboard updates arrive.
@@ -347,8 +408,8 @@ const Video = (() => {
           el('strong', { text: label(flow.item) }),
           el('small', { text: `第 ${flow.group.seq} 組・本組第 ${index} 個・${place(flow.item)}` }),
           plain(preview ? '▶ 播放' : '載入中…', startPlayer, { class: 'primary video-start' }),
-          button('返回影片任務', () => { leave(); notify(); }),
-          el('small', { class: 'video-build', text: '版本 1114-2' })),
+          button(flow.review ? '返回已完成清單' : '返回影片任務', () => { leave(); notify(); }),
+          el('small', { class: 'video-build', text: '版本 1114-3' })),
         el('div', { class: 'video-bar' },
           plain('▶', togglePlayer, { class: 'video-toggle', 'aria-label': '暫停或播放' }),
           el('input', { class: 'video-seek', type: 'range', min: '0', max: '1000', value: '0', 'aria-label': '播放進度',
@@ -358,11 +419,13 @@ const Video = (() => {
           plain('1x', cycleRate, { class: 'video-rate', 'aria-label': '播放速度' }),
           button('我看完了', finish))));
     } else if (flow) {
-      nodes.push(button('返回影片任務', () => { leave(); notify(); }));
+      nodes.push(button(flow.review ? '返回已完成清單' : '返回影片任務', () => { leave(); notify(); }));
       nodes.push(el('p', { class: 'video-eyebrow', text: `第 ${flow.group.seq} 組・本組第 ${flow.group.items.findIndex(i => i.gid === flow.item.gid) + 1} 個` }),
         el('h2', { text: label(flow.item) }), el('p', { text: place(flow.item) }));
       nodes.push(el('h3', { text: '這次看得怎麼樣？' }), el('div', { class: 'video-reports' },
         button('看懂了', () => report('ok'), true), button('再看一次', () => report('again')), button('還是不懂', () => report('ask'))));
+    } else if (screen === 'done') {
+      nodes.push(...libraryPage());
     } else {
       const d = state(), g = d.current || d.lastCompleted;
       if (!preview && summary.version !== 5) nodes.push(el('p', { text: '影片進度待同步，請老師更新摘要。' }));
@@ -373,6 +436,7 @@ const Video = (() => {
         if (d.current) nodes.push(button('繼續', () => open(g, g.items.find(i => !i.done)), true));
         nodes.push(list(g, d));
       }
+      if (groups.length && (preview || summary.version === 5)) nodes.push(button('已完成清單 ›', openLibrary));
       nodes.push(el('h3', { text: `待問老師（${d.askCount}）` }),
         ...d.pending.map(e => {
           const g = d.groups.find(g => g.id === e.groupId), item = g?.items.find(i => i.gid === e.gid);
@@ -380,7 +444,7 @@ const Video = (() => {
           return g.status === 'assigned' ? button(`${label(item)}・${place(item)}`, () => open(g, item)) : el('p', { text: `${label(item)}・待問老師（任務已收回）` });
         }));
     }
-    place_(nodes, status !== 'ready' ? 'loading' : flow ? `${flow.group.id}:${flow.item.gid}:${flow.page}` : 'list');
+    place_(nodes, status !== 'ready' ? 'loading' : flow ? `${flow.group.id}:${flow.item.gid}:${flow.page}` : screen);
     immersive(!!(flow && flow.page === 'play' && status === 'ready'));
     if (flow && flow.page === 'play' && !error && !busy) mountPlayer();
   }
@@ -589,13 +653,15 @@ const Video = (() => {
         pendingAsks: next.pendingAsks, viewing: next.viewing, askCount: next.askCount, doneCount: next.doneCount });
     }));
   }
-  async function open(group, item) {
+  async function open(group, item, review = false) {
     // Re-read current progress: an old DOM callback must not bypass the lock.
     const latest = state().groups.find(g => g.id === group.id);
     const target = latest && VideoLogic.itemAccess(latest).find(i => i.gid === item.gid);
     if (busy || latest?.status !== 'assigned' || !target || target.access === 'locked') return;
+    // 從已完成清單重看只開已完成的積木，不能當成跳過鎖的入口。
+    if (review && target.access !== 'done') return;
     group = latest; item = target;
-    leave(); error = ''; flow = newFlow(group, item);
+    leave(); error = ''; flow = newFlow(group, item); flow.review = review;
     flow.startId = preview ? 'preview-start-' + Date.now() : eventRef().id;
     await start(flow);
   }
@@ -636,6 +702,13 @@ const Video = (() => {
     try {
       await persist(f.reportEvent, s => ({ watchingGid: null, lastEventAt: s.serverTimestamp() }));
       if (gen !== generation || flow !== f) return;
+      if (f.review) {
+        // 重看不解鎖任何東西，不放 overlay（舊組事件不在監聽範圍，overlay 會一直留著）；
+        // 待問與已懂由交易寫入的摘要即時帶回。回報後回到已完成清單。
+        flow = null; busy = false;
+        if (result === 'again') { await open(f.group, f.item, true); return; }
+        notify(); return;
+      }
       if (!events.some(e => e.id === f.reportEvent.id && e.at)) overlay.set(f.reportEvent.id, f.reportEvent);
       const nextState = state();
       const original = nextState.groups.find(g => g.id === f.group.id);
