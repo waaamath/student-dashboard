@@ -8,7 +8,7 @@ const DEFAULT_NAME = '學習進度';
 const NEW_LAYOUT_FOR_ALL = true;
 // 作業與錯題改讀 Firestore（規格書 §11）。false＝完全是原本的行為；true＝所有人；
 // 'device'＝只有開過一次 ?dash=1 的瀏覽器（測試手機用，?dash=0 取消），其他裝置照舊、不載入 Firebase。
-const DASH_FROM_FIRESTORE = 'device';
+const DASH_FROM_FIRESTORE = true;   // 2026-11-21 測試手機驗收通過後全開
 const DASH_DEVICE_KEY = 'dashFromFirestore';
 
 const app = document.getElementById('app');
