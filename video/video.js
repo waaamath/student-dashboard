@@ -1,6 +1,6 @@
 'use strict';
 
-// Optional module. Firebase loads only for a pilot student or a selected pilot child.
+// Optional module. Firebase loads for a pilot student, a selected pilot child, or §11 dashboard reads (app.js).
 const Video = (() => {
   const CONFIG = {
     apiKey: 'AIzaSyDLKj9cZ0ZM4kKlR2IUtodVnEOzsKiKB5o',
@@ -9,7 +9,7 @@ const Video = (() => {
     appId: '1:863861496583:web:67cafde64a8351b7ca83a2',
   };
   let opts, sdkPromise, sdk, authSerial = Promise.resolve(), writesSerial = Promise.resolve(), generation = 0;
-  let token, sid, groups = [], events = [], overlay = new Map(), catalogs = new Map(), summary = {}, asks = [], resolved = [];
+  let token, sid, groups = [], events = [], overlay = new Map(), summary = {}, asks = [], resolved = [];
   let recent = [], extras = new Map(), extraStops = new Map();
   let unsubs = [], eventUnsub, eventKey = '', status = 'idle', error = '', retryAction;
   let host, flow = null, player, playerTicket = 0, busy = false, readyEvents = false;
@@ -85,7 +85,7 @@ const Video = (() => {
     extraStops.forEach(f => f()); extraStops.clear(); extras.clear(); recent = []; summary = {}; asks = []; resolved = [];
     if (eventUnsub) eventUnsub();
     eventUnsub = null; eventKey = ''; readyEvents = false;
-    token = null; sid = null; groups = []; events = []; overlay = new Map(); catalogs = new Map();
+    token = null; sid = null; groups = []; events = []; overlay = new Map();
     flow = null; if (host) host.replaceChildren(); shownSig = null; shownPage = null; busy = false; status = 'idle'; error = ''; retryAction = null; preview = null;
     screen = 'list'; library = null; reviewId = null; libraryTicket++; openChapters = new Set();
   }
@@ -115,6 +115,12 @@ const Video = (() => {
       await afterLogin(s, sub);
     });
     return authSerial;
+  }
+  // 作業與錯題（規格書 §11）共用同一份 SDK 與序列化的 Google 登入；不碰影片自己的狀態與監聽。
+  async function firestore(idToken, live) {
+    let got = null;
+    await login(idToken, live, (s, sub) => { got = { s, sub }; });
+    return live() ? got : null;
   }
   const hasParentCard = st => !!st && st.relation === 'parent' && typeof st.videoId === 'string'
     && !!st.videoId && !st.videoId.includes('/');
@@ -193,7 +199,6 @@ const Video = (() => {
     if (window.VIDEO_PREVIEW) {
       preview = window.VIDEO_PREVIEW;
       groups = preview.groups; events = preview.events;
-      Object.entries(preview.catalogs).forEach(([k, v]) => catalogs.set(k, v));
       readyEvents = true; status = 'ready';
       if (preview.page === 'play' || preview.page === 'report') {
         const g = groups[0]; flow = newFlow(g, g.items[0]); flow.page = preview.page;
@@ -274,32 +279,16 @@ const Video = (() => {
     if (!group || group.status !== 'assigned' || !item) { leave(); return; }
     flow.group = group; flow.item = item;
   }
-  async function refresh(gen) {
-    if (!readyEvents) return;
-    try {
-      const needed = new Map();
-      VideoLogic.recentGroups(groups).forEach(g => g.items.forEach(i => needed.set(`${i.book}_${i.chapter}`, i)));
-      await Promise.all([...needed.keys()].map(async key => {
-        if (catalogs.has(key)) return;
-        const d = await sdk.getDocFromServer(sdk.doc(sdk.db, 'catalog', key));
-        if (!d.exists()) throw new Error('catalog missing');
-        if (gen === generation) catalogs.set(key, d.data());
-      }));
-      if (gen !== generation) return;
-      status = 'ready'; notify();
-    } catch (_) { if (gen === generation) { status = 'error'; fail(); } }
+  function refresh(gen) {
+    if (!readyEvents || gen !== generation) return;
+    status = 'ready'; notify();
   }
-  function metadata(item) {
-    const chapter = catalogs.get(`${item.book}_${item.chapter}`);
-    return chapter && chapter.items.find(i => i.gid === item.gid);
-  }
-  function label(item) { const m = metadata(item); return m && m.label || '積木 ' + item.gid; }
+  function label(item) { return item.label || '積木 ' + item.gid; }
   function place(item) {
-    const m = metadata(item);
     const match = /^(re|j)?sb(\d+)(B?)$/.exec(item.book);
     const book = !match ? item.book : match[1] === 're' ? `學測複習講義part${match[2]}${match[3]}`
       : `${match[1] === 'j' ? '國中' : ''}第${match[2]}冊${match[3]}`;
-    return `${book}・第 ${item.chapter} 章` + (m ? `・第 ${m.section} 節` : '');
+    return `${book}・第 ${item.chapter} 章` + (item.section != null ? `・第 ${item.section} 節` : '');
   }
   function homeCard(open) {
     const d = state(), g = d.current || d.lastCompleted;
@@ -324,11 +313,9 @@ const Video = (() => {
     }));
   }
   function rank(item) {
-    const chapter = catalogs.get(`${item.book}_${item.chapter}`);
-    const index = chapter ? chapter.items.findIndex(i => i.gid === item.gid) : -1;
-    return index < 0 ? 1e9 + item.gid : index;
+    return Number.isInteger(item.order) && item.order >= 0 ? item.order : Infinity;
   }
-  /** 點開才讀一次全部組與相關 catalog；之後完成狀態跟著即時摘要更新，新指派的組要重新點開才會出現。 */
+  /** 點開才讀一次全部組；之後完成狀態跟著即時摘要更新，新指派的組要重新點開才會出現。 */
   async function openLibrary() {
     if (busy) return;
     const gen = generation, ticket = ++libraryTicket;
@@ -340,13 +327,6 @@ const Video = (() => {
         const snap = await sdk.getDocsFromServer(sdk.query(sdk.collection(sdk.db, 'students', sid, 'groups'), sdk.orderBy('seq', 'desc')));
         all = snap.docs.map(d => ({ ...d.data(), id: d.id }));
       }
-      if (gen !== generation || ticket !== libraryTicket) return;
-      const keys = new Set(VideoLogic.doneLibrary(state(null, all).groups).map(c => c.key));
-      await Promise.all([...keys].filter(key => !catalogs.has(key)).map(async key => {
-        // 缺目錄只影響名稱（改顯示「積木 gid」），不讓整份清單讀不到。
-        const d = await sdk.getDocFromServer(sdk.doc(sdk.db, 'catalog', key));
-        if (d.exists() && gen === generation) catalogs.set(key, d.data());
-      }));
       if (gen !== generation || ticket !== libraryTicket) return;
       library = { all, raw: new Map(all.map(g => [g.id, g])) };
       notify();
@@ -364,10 +344,9 @@ const Video = (() => {
       on: { toggle: e => { if (e.target.open) openChapters.add(c.key); else openChapters.delete(c.key); } } },
       el('summary', { text: `${VideoLogic.bookLabel(c.book)}・第 ${c.chapter} 章（${c.entries.length}）` }),
       el('ul', { class: 'video-list' }, c.entries.map(({ group, item }) => {
-        const m = metadata(item);
         return el('li', { class: 'video-item-done' },
           el('button', { text: `${label(item)}${pending.has(item.gid) ? '・待問老師' : ''}`, on: { click: () => openReview(group.id, item.gid) } }),
-          m ? el('small', { text: `第 ${m.section} 節` }) : null);
+          item.section != null ? el('small', { text: `第 ${item.section} 節` }) : null);
       })))));
     return nodes;
   }
@@ -409,7 +388,7 @@ const Video = (() => {
           el('small', { text: `第 ${flow.group.seq} 組・本組第 ${index} 個・${place(flow.item)}` }),
           plain(preview ? '▶ 播放' : '載入中…', startPlayer, { class: 'primary video-start' }),
           button(flow.review ? '返回已完成清單' : '返回影片任務', () => { leave(); notify(); }),
-          el('small', { class: 'video-build', text: '版本 1114-3' })),
+          el('small', { class: 'video-build', text: '版本 1121-1' })),
         el('div', { class: 'video-bar' },
           plain('▶', togglePlayer, { class: 'video-toggle', 'aria-label': '暫停或播放' }),
           el('input', { class: 'video-seek', type: 'range', min: '0', max: '1000', value: '0', 'aria-label': '播放進度',
@@ -779,5 +758,5 @@ const Video = (() => {
     } catch (_) { if (flow === f) fail(() => { render(); }); }
   }
   return { init, load, reset, signOut, hasTab, section, homeCard, afterRender, leave,
-    hasParentCard, selectParent, parentCard };
+    hasParentCard, selectParent, parentCard, firestore };
 })();

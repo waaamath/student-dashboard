@@ -6,6 +6,10 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbxvwBJFQMB-fsjs4Nbw1HhQ
 
 const DEFAULT_NAME = '學習進度';
 const NEW_LAYOUT_FOR_ALL = true;
+// 作業與錯題改讀 Firestore（規格書 §11）。false＝完全是原本的行為；true＝所有人；
+// 'device'＝只有開過一次 ?dash=1 的瀏覽器（測試手機用，?dash=0 取消），其他裝置照舊、不載入 Firebase。
+const DASH_FROM_FIRESTORE = 'device';
+const DASH_DEVICE_KEY = 'dashFromFirestore';
 
 const app = document.getElementById('app');
 let idToken = null;    // 只放記憶體，關掉頁面就沒了
@@ -93,6 +97,7 @@ function setPageName(name) {
 }
 
 function showLogin(note) {
+  stopDash();
   idToken = null;
   dashboard = null;
   if (hasPet()) Pet.reset();
@@ -167,31 +172,227 @@ function hasPet() {
   return typeof Pet !== 'undefined';
 }
 
-async function load() {
-  message('讀取中…', ['第一次開啟可能要等幾秒。']);
-  let res;
+/* ---------- Firestore 作業與錯題：純函式（規格書 §11；tests/run.js 擷取這一段測試） ---------- */
+
+/** 同後端 byUrgent_：有截止日的在前、由急到緩；沒有截止日的在後、指派越久越前面。 */
+function dashUrgent(a, b) {
+  if ((a.dueMs === null) !== (b.dueMs === null)) return a.dueMs === null ? 1 : -1;
+  if (a.dueMs !== null) return a.dueMs - b.dueMs;
+  const x = a.assignedMs === null ? Infinity : a.assignedMs, y = b.assignedMs === null ? Infinity : b.assignedMs;
+  return x === y ? 0 : (x < y ? -1 : 1);
+}
+
+/** 錯題文件的原字串照 API 的規則解析；沒有、壞掉都是 null。 */
+function dashParseWrong(doc) {
+  if (!doc || typeof doc.data !== 'string') return null;
   try {
-    const r = await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },   // 不觸發 CORS 預檢，Apps Script 不支援
-      body: JSON.stringify({ idToken }),
-    });
-    res = await r.json();
+    return JSON.parse(doc.data);
   } catch (e) {
-    showRetry('連不上伺服器，請確認網路後再試一次。');
+    return null;
+  }
+}
+
+/**
+ * 作業文件 → 與 API 相同形狀的學生資料。家長拿不到作業連結；old 的影片與錯題欄位原樣保留
+ * （監聽更新只換作業，不在中途開關影片）。
+ */
+function dashWithWork(old, work) {
+  const items = (Array.isArray(work.items) ? work.items : []).map((it) => (old.relation === 'parent' ? Object.assign({}, it, { link: '' }) : it));
+  const next = { name: String(work.name || ''), className: String(work.className || ''), relation: old.relation,
+    pending: items.filter((i) => i.status !== '已繳').sort(dashUrgent), all: items };
+  ['videoId', 'video', 'wrong'].forEach((k) => { if (Object.prototype.hasOwnProperty.call(old, k)) next[k] = old[k]; });
+  return next;
+}
+
+/** 通行證上的一位學生 → 學生資料；影片欄位比照 API：本人 video、家長 videoId（只有試用學生）。 */
+function dashStudentView(en) {
+  const base = { relation: en.relation };
+  if (en.relation === 'parent' && en.work.video === true) base.videoId = en.sid;
+  if (en.relation === 'self' && en.work.video === true) base.video = true;
+  base.wrong = dashParseWrong(en.wrong);
+  return dashWithWork(base, en.work);
+}
+
+/** 全部文件 → 與 API 相同的回傳。自訂首頁名稱只給本人；錯題更新時間取最後一位有錯題的學生（同 API）。 */
+function dashFromDocs(entries, meta) {
+  let wrongUpdatedAt = null;
+  const students = entries.map((en) => {
+    const view = dashStudentView(en);
+    if (view.wrong && en.wrong.updatedMs) wrongUpdatedAt = Number(en.wrong.updatedMs);
+    return view;
+  });
+  const self = entries.filter((en) => en.relation === 'self')[0];
+  return { ok: true, role: 'member', homeTitle: self ? String(self.work.homeTitle || '') : '',
+    syncedAt: meta && typeof meta.syncedAt === 'number' ? meta.syncedAt : null,
+    wrongUpdatedAt, students, source: 'firestore' };
+}
+
+/** 通行證 → [{ sid, relation }]，本人在前；ID 不合格的略過。 */
+function dashEntries(access) {
+  const ids = (list) => (Array.isArray(list) ? list.filter((id) => typeof id === 'string' && id && id.indexOf('/') < 0) : []);
+  return ids(access.dashSelf).map((sid) => ({ sid, relation: 'self' }))
+    .concat(ids(access.dashParent).map((sid) => ({ sid, relation: 'parent' })));
+}
+
+/** Apps Script 回來後要不要改用它的結果：老師、或可看的學生（身分＋姓名，不看順序）不同。 */
+function dashNeedsApi(shown, res) {
+  if (res.role !== 'member') return true;
+  const key = (d) => d.students.map((s) => s.relation + '|' + s.name).sort().join('\n');
+  return key(shown) !== key(res);
+}
+
+/* ---------- Firestore 作業與錯題：讀取與監聽 ---------- */
+
+let dashGen = 0;      // 換帳號、登出、改用 Apps Script 結果時加一；舊的回呼一律不更新畫面
+let dashLive = null;  // Firestore 畫出來的畫面才有：{ s, entries, sid（正在監聽的學生）, stop }
+
+function dashEnabled() {
+  if (window.DASH_PREVIEW) return true;   // tests/preview.html 用
+  if (typeof Video === 'undefined' || !Video.firestore) return false;
+  if (DASH_FROM_FIRESTORE === true) return true;
+  if (DASH_FROM_FIRESTORE !== 'device') return false;
+  try {
+    return localStorage.getItem(DASH_DEVICE_KEY) === '1';
+  } catch (e) {
+    return false;
+  }
+}
+
+/** ?dash=1 開、?dash=0 關，記在這個瀏覽器；處理完把參數從網址拿掉。 */
+function applyDashSwitch() {
+  const url = new URL(location.href), value = url.searchParams.get('dash');
+  if (value !== '1' && value !== '0') return;
+  try {
+    if (value === '1') localStorage.setItem(DASH_DEVICE_KEY, '1');
+    else localStorage.removeItem(DASH_DEVICE_KEY);
+  } catch (e) { /* 無痕模式等存不了：維持原本的行為 */ }
+  url.searchParams.delete('dash');
+  history.replaceState(null, '', url.href);
+}
+
+function stopDash() {
+  dashGen++;
+  if (dashLive && dashLive.stop) dashLive.stop();
+  dashLive = null;
+}
+
+/** 讀通行證、meta/dash 與每位學生的兩份文件。任何一步失敗、缺文件、老師都回傳 null，等 Apps Script。 */
+async function readDash(token, gen) {
+  const live = () => gen === dashGen;
+  try {
+    const fb = window.DASH_PREVIEW ? await window.DASH_PREVIEW.firebase() : await Video.firestore(token, live);
+    if (!fb || !live()) return null;
+    const s = fb.s;
+    const access = await s.getDocFromServer(s.doc(s.db, 'access', fb.sub));
+    if (!access.exists() || access.data().teacher === true) return null;   // 老師不在本階段範圍
+    const entries = dashEntries(access.data());
+    if (!entries.length) return null;
+    const read = (...path) => s.getDocFromServer(s.doc(s.db, ...path));
+    const [meta, ...docs] = await Promise.all([read('meta', 'dash')].concat(...entries.map((en) => [
+      read('students', en.sid, 'dash', 'work'), read('students', en.sid, 'dash', 'wrong')])));
+    if (!meta.exists() || docs.some((d) => !d.exists())) return null;   // 還沒同步過的學生：整個走 Apps Script
+    entries.forEach((en, i) => { en.work = docs[2 * i].data(); en.wrong = docs[2 * i + 1].data(); });
+    return live() ? { s, entries, meta: meta.data() } : null;
+  } catch (e) {
+    return null;   // 沒有通行證、連線問題：不顯示錯誤
+  }
+}
+
+/** 監聽目前選到的學生的作業文件；換孩子時取消舊的。只有 Firestore 畫出來的畫面才監聽。 */
+function listenDash() {
+  if (!dashLive || !dashboard || dashboard.source !== 'firestore' || selected === null) return;
+  const en = dashLive.entries[selected];
+  if (!en || dashLive.sid === en.sid) return;
+  if (dashLive.stop) dashLive.stop();
+  const gen = dashGen, s = dashLive.s, sid = en.sid;
+  const live = () => gen === dashGen && !!dashLive && dashLive.sid === sid;
+  dashLive.sid = sid;
+  dashLive.stop = null;
+  dashLive.stop = s.onSnapshot(s.doc(s.db, 'students', sid, 'dash', 'work'), (snap) => {
+    if (!live() || !snap.exists()) return;   // 文件被刪（停用、太大）：維持畫面，下次登入走 Apps Script
+    applyDashWork(sid, snap.data());
+  }, () => {
+    if (!live()) return;
+    dashLive.stop = null;   // 失敗不顯示錯誤，維持目前畫面；換孩子或回到頁面時再試
+    dashLive.sid = null;
+  });
+}
+
+/** 停止監聽但不換世代：頁面離開（含 bfcache）時用，回來後下一次畫面更新會重新監聽。 */
+function pauseDash() {
+  if (dashLive && dashLive.stop) dashLive.stop();
+  if (dashLive) { dashLive.stop = null; dashLive.sid = null; }
+}
+
+/** 監聽到新的作業文件：內容有變才更新；只在首頁、作業頁重畫（保留捲動位置），其他頁下次切過去就是新的。 */
+function applyDashWork(sid, work) {
+  const i = dashLive.entries.findIndex((en) => en.sid === sid);
+  const old = dashboard.students[i];
+  if (i < 0 || !old) return;
+  const next = dashWithWork(old, work);
+  const title = old.relation === 'self' ? String(work.homeTitle || '') : dashboard.homeTitle;
+  if (JSON.stringify(next) === JSON.stringify(old) && title === dashboard.homeTitle) return;
+  dashLive.entries[i].work = work;
+  dashboard.students[i] = next;
+  dashboard.homeTitle = title;
+  setPageName(memberName());
+  if (selected !== i || (view !== 'home' && view !== 'work')) return;
+  const y = window.scrollY;
+  renderDashboard();
+  window.scrollTo(0, y);
+}
+
+async function callApi(token) {
+  if (window.DASH_PREVIEW) return window.DASH_PREVIEW.api();
+  const r = await fetch(API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },   // 不觸發 CORS 預檢，Apps Script 不支援
+    body: JSON.stringify({ idToken: token }),
+  });
+  return r.json();
+}
+
+/**
+ * 登入後兩條路同時走（規格書 §11）：Firestore 讀到先畫；Apps Script 照舊在背景呼叫（發／續通行證）。
+ * Apps Script 回來後：老師或學生名單不同就改用它；拒絕就清掉畫面並登出；其餘不重畫。
+ */
+async function load() {
+  stopDash();
+  const gen = dashGen, token = idToken;
+  let fsDrawn = false;
+  message('讀取中…', ['第一次開啟可能要等幾秒。']);
+  // Apps Script 成功回來會呼叫 stopDash 換世代，之後才到的 Firestore 結果自然不會蓋過去。
+  const fast = dashEnabled() ? readDash(token, gen).then((got) => {
+    if (!got || gen !== dashGen) return;
+    dashLive = { s: got.s, entries: got.entries, sid: null, stop: null };
+    fsDrawn = true;
+    openDashboard(dashFromDocs(got.entries, got.meta));
+  }) : Promise.resolve();
+  let res = null;
+  try {
+    res = await callApi(token);
+  } catch (e) {
+    res = null;   // 連不上
+  }
+  if (gen !== dashGen) return;   // 已登出或重新登入
+  if (res && res.ok) {
+    if (fsDrawn && !dashNeedsApi(dashboard, res)) return;   // 同一批學生：不重畫，避免跳動；監聽照舊
+    stopDash();
+    openDashboard(res);
     return;
   }
-  if (res.ok) {
-    openDashboard(res);
-  } else if (res.code === 'not_enrolled') {
-    showNotEnrolled(res.email);
-  } else if (res.code === 'invalid_token') {
-    showLogin('登入已過期，請重新登入。');
-  } else if (res.code === 'not_configured') {
-    showLogin('系統尚未完成設定，請聯絡老師。');
-  } else {
-    showRetry('系統暫時無法讀取資料，請稍後再試。');
+  if (res && (res.code === 'not_enrolled' || res.code === 'invalid_token' || res.code === 'not_configured')) {
+    stopDash();   // 拒絕：清掉畫面並登出 Firebase
+    dashboard = null;
+    if (dashEnabled() && typeof Video !== 'undefined') Video.signOut().catch(() => {});
+    if (res.code === 'not_enrolled') showNotEnrolled(res.email);
+    else showLogin(res.code === 'invalid_token' ? '登入已過期，請重新登入。' : '系統尚未完成設定，請聯絡老師。');
+    return;
   }
+  // 連不上或暫時錯誤：Firestore 已經（或等一下）畫出來就維持，否則照原本顯示重試。
+  if (!fsDrawn) await fast;
+  if (gen !== dashGen || fsDrawn) return;
+  showRetry(res ? '系統暫時無法讀取資料，請稍後再試。' : '連不上伺服器，請確認網路後再試一次。');
 }
 
 function showRetry(text) {
@@ -264,7 +465,8 @@ function topbar() {
 
 function footerNode() {
   return el('footer', null,
-    el('p', { text: dashboard.syncedAt ? `資料更新於 ${formatTime(dashboard.syncedAt)}，每小時更新一次。` : '資料尚未同步。' }),
+    el('p', { text: (dashboard.syncedAt ? `資料更新於 ${formatTime(dashboard.syncedAt)}，每小時更新一次。` : '資料尚未同步。')
+      + (dashboard.source === 'firestore' && DASH_FROM_FIRESTORE === 'device' ? '（Firestore）' : '') }),   // 試用期間辨認資料來源
     el('details', null,
       el('summary', { text: '把這個頁面加到手機主畫面' }),
       el('p', { text: 'iPhone：用 Safari 開啟，按分享，選「加入主畫面」。' }),
@@ -593,6 +795,7 @@ function renderDashboard() {
     return;
   }
   const st = dashboard.students[selected] || dashboard.students[0];
+  listenDash();   // Firestore 畫面：監聽選到的學生（換孩子就換監聽）
   if (typeof Video !== 'undefined') Video.selectParent(idToken, dashboard.role === 'teacher' ? null : st);
   const bottom = useNewLayout();
   if (view === 'pet' && !petTab()) view = 'home';   // 換了沒開放的孩子
@@ -634,9 +837,17 @@ if (hasPet()) {
   });
 }
 
-if (window.DASHBOARD_PREVIEW) {   // tests/preview.html 用，正式頁面不會有
+// 離開頁面（含進入 bfcache）停止監聽；回來時重新監聽。換帳號、登出另由 stopDash 處理。
+window.addEventListener('pagehide', pauseDash);
+window.addEventListener('pageshow', (e) => { if (e.persisted) listenDash(); });
+
+if (window.DASH_PREVIEW) {   // tests/preview.html 的 ?dashfs=：虛構的 Firestore 與 Apps Script
+  idToken = 'preview-token';
+  load();
+} else if (window.DASHBOARD_PREVIEW) {   // tests/preview.html 用，正式頁面不會有
   openDashboard(window.DASHBOARD_PREVIEW);
 } else {
+  applyDashSwitch();
   const browser = inAppBrowser();
   if (browser === 'blocked') showInAppNotice();
   else if (browser === 'ok') {

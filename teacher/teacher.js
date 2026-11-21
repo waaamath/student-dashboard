@@ -67,6 +67,15 @@
     const marksFor = (r, gid) => ({ understood: (r.summary.understoodGids || []).includes(gid),
       pending: !!r.summary.pendingAsks?.[gid], assigned: (r.summary.activeGroups || []).some(g => g.gids.includes(gid)) });
     const metadata = i => catalogs.get(`${i.book}_${i.chapter}`)?.items.find(x => x.gid === i.gid);
+    function storedItem(i, youtubeId, old = i) {
+      const items = catalogs.get(`${i.book}_${i.chapter}`)?.items;
+      const order = items?.findIndex(item => item.gid === i.gid) ?? -1;
+      const snapshot = order >= 0
+        ? { label: [...items[order].label].slice(0, 80).join(''), section: items[order].section, order }
+        : { label: old.label, section: old.section, order: old.order };
+      return { gid: i.gid, youtubeId: youtubeId.trim(), book: i.book, chapter: i.chapter,
+        ...Object.fromEntries(Object.entries(snapshot).filter(([, value]) => value !== undefined)) };
+    }
     const label = i => metadata(i)?.label || '積木 ' + i.gid;
     const place = i => `${logic.bookLabel(i.book)}・第 ${i.chapter} 章`;
     const button = (text, click, props = {}) => el('button', { type: 'button', text, disabled: busy, on: { click }, ...props });
@@ -516,7 +525,7 @@
             if (typeof youtubeId !== 'string' || !youtubeId.trim()) {
               const e = new Error('missing video'); e.missingItem = i; throw e;
             }
-            return { gid: i.gid, youtubeId: youtubeId.trim(), book: i.book, chapter: i.chapter };
+            return storedItem(i, youtubeId);
           });
           live(gen);
           const group = { seq: logic.assignmentSeq(summary, op.mode), status: 'assigned', items,
@@ -659,7 +668,7 @@
             const old = group.items.find(old => old.gid === i.gid);
             const youtubeId = old?.youtubeId || maps.get(`${i.book}_${i.chapter}`)?.[i.gid];
             if (typeof youtubeId !== 'string' || !youtubeId.trim()) throw Object.assign(new Error('missing video'), { missingItem: i });
-            return { gid: i.gid, youtubeId: youtubeId.trim(), book: i.book, chapter: i.chapter };
+            return storedItem(i, youtubeId, old);
           });
           const active = summary.activeGroups.find(g => g.id === group.id);
           const next = logic.editedGroupSummary(summary, group, items, done, !!active?.started || events.length > 0);
