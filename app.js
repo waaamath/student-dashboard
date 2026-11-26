@@ -342,12 +342,23 @@ function applyDashWork(sid, work) {
   window.scrollTo(0, y);
 }
 
-async function callApi(token) {
-  if (window.DASH_PREVIEW) return window.DASH_PREVIEW.api();
+let lastDashRefresh = -Infinity;
+
+function refreshDash() {
+  if (!idToken || !dashLive || !dashLive.stop || !dashboard || dashboard.source !== 'firestore' ||
+      dashboard.students[selected]?.relation !== 'self') return;
+  const now = Date.now();
+  if (now - lastDashRefresh < 60000) return;
+  lastDashRefresh = now;
+  void callApi(idToken, 'dash.refresh').catch(() => {});
+}
+
+async function callApi(token, action) {
+  if (window.DASH_PREVIEW) return window.DASH_PREVIEW.api(action);
   const r = await fetch(API_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },   // 不觸發 CORS 預檢，Apps Script 不支援
-    body: JSON.stringify({ idToken: token }),
+    body: JSON.stringify({ idToken: token, action }),
   });
   return r.json();
 }
@@ -367,6 +378,7 @@ async function load() {
     dashLive = { s: got.s, entries: got.entries, sid: null, stop: null };
     fsDrawn = true;
     openDashboard(dashFromDocs(got.entries, got.meta));
+    refreshDash();
   }) : Promise.resolve();
   let res = null;
   try {
@@ -840,6 +852,9 @@ if (hasPet()) {
 // 離開頁面（含進入 bfcache）停止監聽；回來時重新監聽。換帳號、登出另由 stopDash 處理。
 window.addEventListener('pagehide', pauseDash);
 window.addEventListener('pageshow', (e) => { if (e.persisted) listenDash(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') refreshDash();
+});
 
 if (window.DASH_PREVIEW) {   // tests/preview.html 的 ?dashfs=：虛構的 Firestore 與 Apps Script
   idToken = 'preview-token';

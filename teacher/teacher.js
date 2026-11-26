@@ -57,7 +57,9 @@
     let dragFrom = null, renderQueued = false, menuGid = null;
     let draft = [], pendingAssign = null, resolves = new Map(), busy = false, ready = false, message = '', error = '', retry;
     let detailStops = [], detailTicket = 0, detailRefresh, checked = new Set(), unlocked = new Set(), templates = [], modal = null;
-    let filter = 'today', classFilter = '', today = [], scheduleReason = '', batch = null, previewMode = false;
+    let filter = 'all', classFilter = '', today = [], scheduleReason = '', batch = null, previewMode = false;
+    let scheduleLoaded = false;
+    let searchText = '', searchInput = null, studentResults = null, composing = false, rosterTouched = false, checkedExpanded = false;
     let editing = null, pendingEdit = null, insertBefore = null, showRecalled = false;
     let historyMore, expandEvents, thumbObserver, thumbNodes = [], thumbCache = new Map(), thumbPopup = null;
     const rows = snap => snap.docs.map(d => ({ ...d.data(), id: d.id }));
@@ -155,7 +157,9 @@
       generation++; stopListeners(); token = null; roster = []; selected = null; records = new Map();
       catalogs = new Map(); catalogLoads = new Map(); chapters = []; chapterKey = ''; draft = []; resolves = new Map(); pendingAssign = null;
       ready = false; busy = false; message = ''; error = ''; retry = null;
-      checked.clear(); unlocked.clear(); templates = []; modal = null; batch = null; filter = 'today'; today = []; scheduleReason = ''; previewMode = false;
+      checked.clear(); unlocked.clear(); templates = []; modal = null; batch = null; filter = 'all'; classFilter = ''; today = []; scheduleReason = ''; previewMode = false;
+      scheduleLoaded = false; searchText = ''; composing = false; rosterTouched = false; checkedExpanded = false; renderQueued = false; studentResults = null;
+      if (searchInput) searchInput.value = '';
     }
     function fail(action, text = '暫時無法讀寫影片任務，請檢查網路後再試一次。') {
       error = text; retry = action; render();
@@ -205,9 +209,12 @@
         ready = true; message = ''; watchStudents(); render();
         (options.api || api)(idToken, 'video.today').then(result => {
           if (gen !== generation) return;
+          scheduleLoaded = true;
           today = Array.isArray(result.videoIds) ? result.videoIds : [];
-          scheduleReason = result.reason || (!result.ok ? 'unavailable' : ''); render();
-        }).catch(() => { if (gen === generation) { scheduleReason = 'unavailable'; render(); } });
+          scheduleReason = result.reason || (!result.ok ? 'schedule_unavailable' : '');
+          if (!scheduleReason && !rosterTouched) filter = 'today';
+          render();
+        }).catch(() => { if (gen === generation) { scheduleReason = 'schedule_unavailable'; render(); } });
         if (chapters.length) await chooseChapter(chapters[0].id);
       } catch (_) { if (gen === generation) fail(() => load(idToken), '目前無法使用影片指派，請再試一次。'); }
     }
@@ -231,14 +238,14 @@
         () => { if (valid()) fail(() => watchStudents()); }));
       roster.forEach(st => {
         const old = records.get(st.videoId);
-        const r = { ...st, summary: {}, groups: old?.groups || [], events: old?.events || [], loaded: new Set() }; records.set(st.videoId, r);
+        const r = { ...st, summary: {}, summaryExists: false, groups: old?.groups || [], events: old?.events || [], loaded: new Set() }; records.set(st.videoId, r);
         const listen = (name, ref, update) => {
           unsubs.push(sdk.onSnapshot(ref, snap => {
             if (!valid()) return;
             update(snap); r.loaded.add(name); render();
           }, () => { if (valid()) fail(() => { watchStudents(); render(); }); }));
         };
-        listen('summary', studentRef(st.videoId), s => { r.summary = s.exists() ? s.data() : {}; if (selected === st.videoId) detailRefresh?.(); });
+        listen('summary', studentRef(st.videoId), s => { r.summaryExists = s.exists(); r.summary = r.summaryExists ? s.data() : {}; if (selected === st.videoId) detailRefresh?.(); });
       });
       if (selected && !multiple()) watchDetails(selected);
     }
@@ -248,7 +255,7 @@
       const gen = generation, ticket = detailTicket, r = records.get(sid);
       const valid = () => gen === generation && ticket === detailTicket && selected === sid;
       let recent = [], local = [], asks = [], resolved = [], eventStop, autoLocated = false, cursor = null, exhausted = false, loadingHistory = false;
-      let autoPages = 0, fillCompleted;
+      let autoPages = 0, fillCompleted, eventKey = '';
       const history = new Map(), expandedEvents = new Map(), expandedStops = new Map();
       r.expanded = new Set(); r.completedLimit = 3; r.historyExhausted = false;
       const extra = new Map(), stops = new Map();
@@ -335,11 +342,14 @@
       }
       detailStops.push(sdk.onSnapshot(sdk.query(collectionRef(sid, 'groups'), sdk.orderBy('seq', 'desc'), sdk.limit(10)), snap => {
         if (!valid()) return;
-        recent = rows(snap); r.loaded.add('groups'); eventStop?.(); local = [];
+        recent = rows(snap); r.loaded.add('groups');
         if (!history.size) { cursor = snap.docs.at(-1); exhausted = snap.docs.length < 10; r.historyExhausted = exhausted; }
         const ids = recent.map(g => g.id);
+        const key = JSON.stringify([...ids].sort());
+        if (key === eventKey) { update(); return; }
+        eventKey = key; eventStop?.(); eventStop = null; local = []; r.loaded.delete('events');
         if (ids.length) eventStop = sdk.onSnapshot(sdk.query(collectionRef(sid, 'events'), sdk.where('groupId', 'in', ids)), es => {
-          if (!valid()) return;
+          if (!valid() || key !== eventKey) return;
           local = rows(es); r.loaded.add('events'); update();
         }, failure);
         else r.loaded.add('events');
@@ -454,6 +464,7 @@
       doc.getElementById('assign-button')?.focus?.();
     }
     function checkStudent(sid, value) {
+      rosterTouched = true;
       if (busy || pendingAssign || pendingEdit || batch) return;
       if (editing) { if (!discard()) return; clearEditor(); }
       if (value) checked.add(sid); else checked.delete(sid);
@@ -798,27 +809,72 @@
             el('span', { class: pending ? 'badge ask' : 'badge', text }), pending ? button('已解決', () => resolve(pending), { 'aria-label': `已解決 ${label(i)} ${title}` }) : null);
         })), group ? button('收回整組', () => changeGroup(group, 'recall')) : null);
     }
-    function left() {
-      const students = roster.map(s => records.get(s.videoId)).filter(Boolean)
-        .filter(r => filter === 'today' && !scheduleReason ? today.includes(r.videoId) : filter === 'class' ? !classFilter || r.className === classFilter : true)
-        .sort((a, b) => Number(logic.summaryStatus(b.summary).waiting) - Number(logic.summaryStatus(a.summary).waiting));
-      return el('aside', { class: 'column students', id: 'students-column' }, el('div', { class: 'column-title' },
-        el('h2', { text: '學生' }), el('small', { text: `${roster.length} 位試用學生` })),
-        el('div', { class: 'student-filters' }, ['today', 'class', 'all'].map((value, index) => button(['今天到班', '各班級', '全部'][index], () => { filter = value; render(); }, { 'aria-pressed': filter === value }))),
-        filter === 'class' ? el('select', { 'aria-label': '班級', on: { change: e => { classFilter = e.target.value; render(); } } },
-          el('option', { value: '', text: '各班級' }), [...new Set(roster.map(r => r.className))].map(c => el('option', { value: c, selected: classFilter === c, text: c }))) : null,
-        scheduleReason ? el('p', { class: 'muted', text: '排課資料暫時讀不到，改列全部學生' }) : null,
-        students.map(r => {
+    function matchingStudents() {
+      const query = searchText.trim(), now = (options.now || Date.now)();
+      const priority = r => r.summaryExists === false || logic.summaryStatus(r.summary, now).waiting;
+      return roster.map(s => records.get(s.videoId)).filter(Boolean)
+        .filter(r => (filter !== 'today' || today.includes(r.videoId))
+          && (!classFilter || r.className === classFilter) && (!query || r.name.includes(query)))
+        .sort((a, b) => Number(priority(b)) - Number(priority(a))
+          || (a.className < b.className ? 1 : a.className > b.className ? -1 : 0)
+          || a.name.localeCompare(b.name, 'zh-Hant'));
+    }
+    function renderStudents() {
+      if (!studentResults) return;
+      const students = matchingStudents(), visible = new Set(students.map(r => r.videoId));
+      const hidden = [...checked].filter(sid => !visible.has(sid)).length;
+      const locked = busy || !!pendingAssign || !!pendingEdit || !!batch;
+      const todayEmpty = filter === 'today' && !roster.some(r => today.includes(r.videoId));
+      studentResults.replaceChildren(...[
+        el('p', { class: 'student-count', text: `顯示 ${students.length} / ${roster.length} 位` }),
+        checked.size ? el('div', { class: 'checked-summary' },
+          button(`已勾 ${checked.size} 人` + (hidden ? `，其中 ${hidden} 人不在目前清單` : ''), () => {
+            checkedExpanded = !checkedExpanded; renderStudents();
+          }, { 'aria-expanded': checkedExpanded, disabled: false }),
+          checkedExpanded ? el('ul', null, [...checked].map(sid => {
+            const r = records.get(sid);
+            return el('li', null, el('span', { text: `${r.name}（${r.className}）` }),
+              button('取消', () => checkStudent(sid, false), { disabled: locked, 'aria-label': `取消勾選 ${r.name}` }));
+          })) : null,
+          button('全部取消', () => { [...checked].forEach(sid => checkStudent(sid, false)); }, { disabled: locked })) : null,
+        el('div', { class: 'student-list' }, students.map(r => {
           const d = logic.summaryStatus(r.summary, (options.now || Date.now)());
           return el('div', { class: 'student-row' }, el('input', { type: 'checkbox', 'aria-label': `勾選 ${r.name}`, checked: checked.has(r.videoId),
             disabled: busy || !!pendingAssign || !!batch, on: { change: e => checkStudent(r.videoId, e.target.checked) } }), studentButton(r, d));
-        }), !students.length ? el('p', { class: 'muted', text: '目前沒有可指派的試用學生。' }) : null);
+        }), !students.length ? el('div', { class: 'student-empty' },
+          el('p', { class: 'muted', text: todayEmpty ? '今天沒有到班的試用學生' : '找不到符合條件的學生' }),
+          button('改搜全部', () => { rosterTouched = true; filter = 'all'; classFilter = ''; render(); })) : null)].filter(Boolean));
     }
+    function left() {
+      // 搜尋框常駐；組字結束也處理沒有後續 input 的情況。
+      if (!searchInput) searchInput = el('input', { id: 'student-search', type: 'search', placeholder: '搜尋姓名', 'aria-label': '搜尋姓名', on: {
+        compositionstart: () => { composing = true; rosterTouched = true; },
+        input: () => { rosterTouched = true; if (!composing) { searchText = searchInput.value; renderStudents(); } },
+        compositionend: () => {
+          composing = false; rosterTouched = true; searchText = searchInput.value;
+          if (renderQueued) { renderQueued = false; render(); } else renderStudents();
+        } } });
+      const classes = [...new Set(roster.map(r => r.className))].sort().reverse();
+      studentResults = el('div', { class: 'student-results' }); renderStudents();
+      return el('aside', { class: 'column students', id: 'students-column' }, el('div', { class: 'column-title' },
+        el('h2', { text: '學生' }), el('small', { text: `${roster.length} 位試用學生` })), searchInput,
+        el('div', { class: 'student-filters' },
+          button('全部名單', () => { rosterTouched = true; filter = 'all'; render(); }, { 'aria-pressed': String(filter === 'all') }),
+          button('今天到班', () => { rosterTouched = true; filter = 'today'; render(); }, { 'aria-pressed': String(filter === 'today'), disabled: busy || !!scheduleReason || !scheduleReady() }),
+          !scheduleReady() && !scheduleReason ? el('small', { text: '讀取中' }) : null,
+          scheduleReason === 'schedule_not_configured' ? el('small', { text: '尚未設定排課' }) : null),
+        el('div', { class: 'student-filters class-filters' }, ['', ...classes].map(value => button(value || '所有班級', () => {
+          rosterTouched = true; classFilter = value; render();
+        }, { 'aria-pressed': String(classFilter === value) }))),
+        scheduleReason && scheduleReason !== 'schedule_not_configured' ? el('p', { class: 'muted', text: '排課資料暫時讀不到，改列全部學生' }) : null,
+        studentResults);
+    }
+    function scheduleReady() { return scheduleLoaded || previewMode; }
     function studentButton(r, d, watching) {
       const n = el('button', { type: 'button', class: 'student-card', disabled: busy || !!pendingAssign,
-        'aria-pressed': String(selected === r.videoId), on: { click: () => select(r.videoId) } },
+        'aria-pressed': String(selected === r.videoId), on: { click: () => { rosterTouched = true; select(r.videoId); } } },
       el('div', { class: 'student-heading' }, el('strong', { text: r.name }), el('small', { text: r.className })),
-      el('span', { class: d.waiting ? 'waiting' : 'muted', text: !r.loaded.has('summary') ? '讀取中…' : !d.known ? '進度待同步' : d.waiting ? '等待指派' : `進行到第 ${d.position} 個（共 ${d.current.gids.length} 個）` }),
+      el('span', { class: d.waiting || r.summaryExists === false ? 'waiting' : 'muted', text: !r.loaded.has('summary') ? '讀取中…' : r.summaryExists === false ? '尚未指派' : !d.known ? '進度待同步' : d.waiting ? '等待指派' : `進行到第 ${d.position} 個（共 ${d.current.gids.length} 個）` }),
       d.askCount ? el('span', { class: 'badge ask', text: `待問 ${d.askCount}` }) : null,
       d.watchingGid ? el('small', { class: 'watching', text: `正在看・${r.summary.watchingLabel || '積木 ' + d.watchingGid}` }) : null);
       return n;
@@ -971,12 +1027,12 @@
         button('取消', () => { if (modal?.type === 'batch' && !batch.some(o => o.result === 'success' || o.result === 'failed')) batch = null; cancelDialog(); }, { id: 'dialog-cancel', disabled: busy }));
     }
     function render() {
-      // 拖移中重畫會中斷拖移，延到放開後再畫。
-      if (dragFrom !== null) { renderQueued = true; return; }
+      // 拖移或組字中重畫會中斷操作，結束後再補畫。
+      if (dragFrom !== null || composing) { renderQueued = true; return; }
       if (!thumbPopup?.pinned) closeThumb();
       thumbObserver?.disconnect(); thumbNodes = [];
       const focus = doc.activeElement?.id;
-      const selection = focus === 'template-name' ? [doc.activeElement.selectionStart, doc.activeElement.selectionEnd] : null;
+      const selection = (focus === 'template-name' || focus === 'student-search') ? [doc.activeElement.selectionStart, doc.activeElement.selectionEnd] : null;
       const scrolls = ['students-column', 'selected-column', 'catalog-column'].map(id => [id, doc.getElementById(id)?.scrollTop || 0]);
       host.replaceChildren(...[el('header', { class: 'topbar' }, el('div', null, el('a', { href: '../', text: '學生儀表板' }), el('h1', { text: '影片指派' })), token ? button('登出', signOut, { disabled: false }) : null),
         error ? el('div', { class: 'error', role: 'alert' }, el('p', { text: error }), button('再試一次', () => { const action = retry; error = ''; retry = null; render(); return action?.(); })) : null,

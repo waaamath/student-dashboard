@@ -9,7 +9,7 @@ const Video = (() => {
     appId: '1:863861496583:web:67cafde64a8351b7ca83a2',
   };
   let opts, sdkPromise, sdk, authSerial = Promise.resolve(), writesSerial = Promise.resolve(), generation = 0;
-  let token, sid, groups = [], events = [], overlay = new Map(), summary = {}, asks = [], resolved = [];
+  let token, sid, groups = [], events = [], overlay = new Map(), summary = {}, summaryExists = false, asks = [], resolved = [];
   let recent = [], extras = new Map(), extraStops = new Map();
   let unsubs = [], eventUnsub, eventKey = '', status = 'idle', error = '', retryAction;
   let host, flow = null, player, playerTicket = 0, busy = false, readyEvents = false;
@@ -82,7 +82,7 @@ const Video = (() => {
     leave();
     generation++;
     unsubs.forEach(f => f()); unsubs = [];
-    extraStops.forEach(f => f()); extraStops.clear(); extras.clear(); recent = []; summary = {}; asks = []; resolved = [];
+    extraStops.forEach(f => f()); extraStops.clear(); extras.clear(); recent = []; summary = {}; summaryExists = false; asks = []; resolved = [];
     if (eventUnsub) eventUnsub();
     eventUnsub = null; eventKey = ''; readyEvents = false;
     token = null; sid = null; groups = []; events = []; overlay = new Map();
@@ -222,7 +222,8 @@ const Video = (() => {
       const listenError = () => { if (gen === generation) { status = 'error'; fail(); } };
       unsubs.push(s.onSnapshot(s.doc(s.db, 'students', sid), snap => {
         if (gen !== generation) return;
-        summary = snap.exists() ? snap.data() : {};
+        summaryExists = snap.exists();
+        summary = summaryExists ? snap.data() : {};
         syncGroups(gen); refresh(gen);
       }, listenError));
       for (const [kind, filters] of [['ask', [s.where('type', '==', 'report'), s.where('result', '==', 'ask')]], ['resolve', [s.where('type', '==', 'resolve')]]]) {
@@ -334,8 +335,9 @@ const Video = (() => {
   }
   function libraryPage() {
     const nodes = [button('返回影片任務', () => { libraryTicket++; screen = 'list'; reviewId = null; notify(); }), el('h2', { text: '已完成清單' })];
+    if (!preview && !summaryExists && !groups.length) return [...nodes, el('h2', { text: '目前沒有影片任務' })];
     if (!library) return [...nodes, el('p', { text: '正在讀取已完成的影片…' })];
-    if (!preview && summary.version !== 5) return [...nodes, el('p', { text: '影片進度待同步，請老師更新摘要。' })];
+    if (!preview && summary.version !== 5 && (summaryExists || groups.length)) return [...nodes, el('p', { text: '影片進度待同步，請老師更新摘要。' })];
     const d = state(null, library.all), chapters = VideoLogic.doneLibrary(d.groups, rank);
     if (!chapters.length) return [...nodes, el('p', { text: '還沒有看完的影片。' })];
     const pending = new Set(d.pending.map(e => e.gid));
@@ -388,7 +390,7 @@ const Video = (() => {
           el('small', { text: `第 ${flow.group.seq} 組・本組第 ${index} 個・${place(flow.item)}` }),
           plain(preview ? '▶ 播放' : '載入中…', startPlayer, { class: 'primary video-start' }),
           button(flow.review ? '返回已完成清單' : '返回影片任務', () => { leave(); notify(); }),
-          el('small', { class: 'video-build', text: '版本 1121-1' })),
+          el('small', { class: 'video-build', text: '版本 1126-1' })),
         el('div', { class: 'video-bar' },
           plain('▶', togglePlayer, { class: 'video-toggle', 'aria-label': '暫停或播放' }),
           el('input', { class: 'video-seek', type: 'range', min: '0', max: '1000', value: '0', 'aria-label': '播放進度',
@@ -407,7 +409,7 @@ const Video = (() => {
       nodes.push(...libraryPage());
     } else {
       const d = state(), g = d.current || d.lastCompleted;
-      if (!preview && summary.version !== 5) nodes.push(el('p', { text: '影片進度待同步，請老師更新摘要。' }));
+      if (!preview && summary.version !== 5 && (summaryExists || groups.length)) nodes.push(el('p', { text: '影片進度待同步，請老師更新摘要。' }));
       else if (!groups.length) nodes.push(el('h2', { text: '目前沒有影片任務' }));
       else if (!d.current) nodes.push(el('h2', { text: g ? '這組完成了，等老師安排下一組' : '等待老師安排' }));
       if (g) {

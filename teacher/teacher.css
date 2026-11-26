@@ -106,3 +106,16 @@ select { width: 100%; background: #f8faf8; border: 1px solid #d7e2d9; padding: 9
 .reorder .card-menu button { border: 0; background: none; border-radius: 0; text-align: left; padding: 9px 14px; font-size: 13px; white-space: nowrap; }
 .reorder .card-menu button:hover:not(:disabled) { background: #eef3ef; }
 .reorder .card-menu button.danger:not(:disabled) { color: #b3261e; }
+
+#student-search { width: 100%; min-width: 0; font: inherit; padding: 8px; border: 1px solid #cfdbd5; border-radius: 8px; margin-bottom: 12px; }
+.students { overflow-wrap: anywhere; }
+.students .student-filters > * { max-width: 100%; }
+.students .student-filters small { flex-basis: 100%; }
+.student-count, .checked-summary, .student-empty { margin-bottom: 12px; }
+.checked-summary { font-size: 12px; }
+.checked-summary button, .student-empty button { max-width: 100%; white-space: normal; font-size: 12px; padding: 6px; }
+.checked-summary ul { padding-left: 18px; max-height: 180px; overflow-y: auto; }
+.checked-summary li { margin: 6px 0; }
+.checked-summary li button { margin-left: 4px; }
+.students .student-card { min-width: 0; flex: 1; }
+.students .student-heading strong { white-space: normal; }
