@@ -271,6 +271,7 @@ function applyDashSwitch() {
 }
 
 function stopDash() {
+  clearDashRefresh();
   dashGen++;
   if (dashLive && dashLive.stop) dashLive.stop();
   dashLive = null;
@@ -302,6 +303,7 @@ async function readDash(token, gen) {
 function listenDash() {
   if (!dashLive || !dashboard || dashboard.source !== 'firestore' || selected === null) return;
   const en = dashLive.entries[selected];
+  if (!en || en.relation !== 'self' || dashLive.sid !== en.sid) clearDashRefresh();
   if (!en || dashLive.sid === en.sid) return;
   if (dashLive.stop) dashLive.stop();
   const gen = dashGen, s = dashLive.s, sid = en.sid;
@@ -320,6 +322,7 @@ function listenDash() {
 
 /** 停止監聽但不換世代：頁面離開（含 bfcache）時用，回來後下一次畫面更新會重新監聽。 */
 function pauseDash() {
+  clearDashRefresh();
   if (dashLive && dashLive.stop) dashLive.stop();
   if (dashLive) { dashLive.stop = null; dashLive.sid = null; }
 }
@@ -343,14 +346,45 @@ function applyDashWork(sid, work) {
 }
 
 let lastDashRefresh = -Infinity;
+let dashRefreshTimer = null, dashRefreshEpoch = 0;
 
-function refreshDash() {
-  if (!idToken || !dashLive || !dashLive.stop || !dashboard || dashboard.source !== 'firestore' ||
-      dashboard.students[selected]?.relation !== 'self') return;
+function clearDashRefresh() {
+  if (dashRefreshTimer !== null) clearTimeout(dashRefreshTimer);
+  dashRefreshTimer = null;
+  dashRefreshEpoch++;   // 已送出的舊回應也不能重新排程
+}
+
+function canRefreshDash() {
+  return !!idToken && !!dashLive && !!dashLive.stop && dashboard?.source === 'firestore' &&
+    dashboard.students[selected]?.relation === 'self' && document.visibilityState === 'visible';
+}
+
+function scheduleDashRefresh(delay, retry) {
+  if (dashRefreshTimer !== null) return;
+  dashRefreshTimer = setTimeout(() => {
+    dashRefreshTimer = null;
+    refreshDash(retry);
+  }, delay);
+}
+
+function refreshDash(retry = false) {
+  if (!canRefreshDash()) return;
   const now = Date.now();
-  if (now - lastDashRefresh < 60000) return;
+  if (!retry && now - lastDashRefresh < 60000) {
+    scheduleDashRefresh(lastDashRefresh + 61000 - now, false);
+    return;
+  }
+  clearDashRefresh();
   lastDashRefresh = now;
-  void callApi(idToken, 'dash.refresh').catch(() => {});
+  const epoch = dashRefreshEpoch, token = idToken, sid = dashLive.sid;
+  void callApi(token, 'dash.refresh').then((res) => {
+    if (!retry && res?.status === 'cooldown' && epoch === dashRefreshEpoch &&
+        token === idToken && sid === dashLive?.sid && canRefreshDash()) {
+      // 後端冷卻以收到請求起算；同一輪只補試一次。
+      clearDashRefresh();
+      scheduleDashRefresh(10000, true);
+    }
+  }).catch(() => {});
 }
 
 async function callApi(token, action) {
